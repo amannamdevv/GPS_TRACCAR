@@ -1,5 +1,5 @@
 import React, { useContext, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Switch, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Switch, TouchableOpacity, Linking } from 'react-native';
 import Header from '../../components/Header';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AuthContext } from '../../context/AuthContext';
@@ -50,19 +50,21 @@ const SettingsScreen = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        <SectionHeader title="SERVER" />
+        <SectionHeader title="WEBSITE" />
         <View style={styles.card}>
-          <SettingRow 
-            icon="server-network" 
-            title="Server URL" 
-            subtitle={userInfo?.server || 'Not configured'}
-            rightElement={
-              <View style={styles.statusBadge}>
-                <View style={styles.statusDot} />
-                <Text style={styles.statusText}>Connected</Text>
-              </View>
-            }
-          />
+          <TouchableOpacity onPress={() => Linking.openURL('http://gps.shrotitele.com/')}>
+            <SettingRow 
+              icon="web" 
+              title="Website Link" 
+              subtitle="gps.shrotitele.com"
+              rightElement={
+                <View style={styles.statusBadge}>
+                  <View style={styles.statusDot} />
+                  <Text style={styles.statusText}>Connected</Text>
+                </View>
+              }
+            />
+          </TouchableOpacity>
         </View>
 
         <SectionHeader title="PREFERENCES" />

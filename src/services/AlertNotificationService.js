@@ -27,16 +27,7 @@ const ALERT_CONFIG = {
     color: '#D50000',
     speakPrefix: 'DG turned OFF on',
   },
-  deviceMoving: {
-    title: '🚗 Moving',
-    color: '#0091EA',
-    speakPrefix: 'Started moving,',
-  },
-  deviceStopped: {
-    title: '🛑 Stopped',
-    color: '#37474F',
-    speakPrefix: 'Stopped,',
-  },
+
   // ── From alaram API ──
   powerCut: {
     title: '⚡ Power Cut Detected',

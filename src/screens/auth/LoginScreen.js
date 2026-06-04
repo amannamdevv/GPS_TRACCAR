@@ -20,7 +20,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AuthContext } from '../../context/AuthContext';
 
-const DEFAULT_SERVER = 'http://shrotitele.com:8082';
+const DEFAULT_SERVER = 'http://gps.shrotitele.com/';
 
 const LoginScreen = ({ navigation }) => {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER);
@@ -63,29 +63,14 @@ const LoginScreen = ({ navigation }) => {
         {/* Form Card */}
         <View style={styles.formContainer}>
 
-          {/* Server URL */}
-          <Text style={styles.fieldLabel}>Server URL</Text>
-          <View style={styles.inputContainer}>
-            <Icon name="server" size={20} color="#757575" style={styles.inputIcon} />
-            <TextInput
-              style={styles.input}
-              placeholder="http://shrotitele.com:8082"
-              placeholderTextColor="#AAAAAA"
-              value={serverUrl}
-              onChangeText={setServerUrl}
-              autoCapitalize="none"
-              keyboardType="url"
-              returnKeyType="next"
-            />
-          </View>
 
-          {/* Email */}
-          <Text style={styles.fieldLabel}>Email / Username</Text>
+          {/* Login ID */}
+          <Text style={styles.fieldLabel}>Login ID</Text>
           <View style={styles.inputContainer}>
             <Icon name="account" size={20} color="#757575" style={styles.inputIcon} />
             <TextInput
               style={styles.input}
-              placeholder="admin@example.com"
+              placeholder="Enter Login ID"
               placeholderTextColor="#AAAAAA"
               value={email}
               onChangeText={setEmail}

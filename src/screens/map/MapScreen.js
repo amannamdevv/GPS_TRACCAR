@@ -9,10 +9,10 @@ import {
   FlatList,
   Dimensions,
   Animated,
-  StatusBar,
-  Alert,
+  StatusBar, Alert,
   PermissionsAndroid,
   Platform,
+  Linking,
 } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -23,12 +23,11 @@ import notifee, { AndroidImportance } from '@notifee/react-native';
 import AlertNotificationService from '../../services/AlertNotificationService';
 
 // API Services
-import { fetchDeviceList, reverseGeocode, fetchAlarms } from '../../api/webApi';
+import { fetchDeviceList, reverseGeocode } from '../../api/webApi';
 
-const { height } = Dimensions.get('window');
-const REFRESH_INTERVAL = 5000; 
+const { height, width } = Dimensions.get('window');
+const REFRESH_INTERVAL = 5000;
 
-// ─── NOTIFICATION HELPER ──────────────────────────────────────────────────────
 async function displayNotification(title, body, timestamp) {
   try {
     const channelId = await notifee.createChannel({
@@ -42,7 +41,7 @@ async function displayNotification(title, body, timestamp) {
       body,
       android: {
         channelId,
-        smallIcon: 'ic_launcher', // ensures it works on all android versions
+        smallIcon: 'ic_launcher',
         showTimestamp: !!timestamp,
         timestamp: timestamp || undefined,
         pressAction: { id: 'default' },
@@ -70,38 +69,54 @@ const MapScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [mapReady, setMapReady] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filter, setFilter] = useState('all'); 
-  const [mapLayer, setMapLayer] = useState('standard'); 
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [mapLayer, setMapLayer] = useState('standard');
   const [followMode, setFollowMode] = useState(false);
-  
-  // UI State
-  const [bottomSheetHeight] = useState(new Animated.Value(220));
-  const [isExpanded, setIsExpanded] = useState(false);
 
-  // ─── LEAFLET CORE (ROBUST VERSION) ──────────────────────────────────────────
+  // Bottom action panel animation
+  const slideAnim = useRef(new Animated.Value(300)).current;
+
+  const selectedDevice = useMemo(() => {
+    return devices.find(d => d.id === selectedDeviceId);
+  }, [devices, selectedDeviceId]);
+
+  // Slide up panel when device selected, slide down when deselected
+  useEffect(() => {
+    if (selectedDeviceId) {
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 50,
+        friction: 8
+      }).start();
+    } else {
+      Animated.timing(slideAnim, {
+        toValue: 300,
+        duration: 250,
+        useNativeDriver: true
+      }).start();
+    }
+  }, [selectedDeviceId]);
+
+  // ─── LEAFLET CORE ──────────────────────────────────────────────────────────
   const mapHtml = useMemo(() => `
     <!DOCTYPE html>
     <html>
     <head>
-      <title>Traccar Dashboard</title>
+      <title>Traccar Map</title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
       <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
       <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
       <style>
-        body { margin: 0; padding: 0; font-family: 'Roboto', sans-serif; }
+        body { margin: 0; padding: 0; }
         #map { height: 100vh; width: 100vw; background: #e8eaed; }
-        
-        .leaflet-popup-content-wrapper { background: #212121; color: #fff; border-radius: 6px; padding: 0; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
-        .leaflet-popup-content { margin: 0; width: 260px !important; }
-        .popup-header { padding: 12px; background: #333; border-top-left-radius: 6px; border-top-right-radius: 6px; border-bottom: 1px solid #444; font-weight: bold; font-size: 14px; }
-        .popup-body { padding: 12px; }
-        .popup-row { display: flex; justify-content: space-between; margin-bottom: 6px; font-size: 12px; }
-        .popup-label { color: #aaa; }
-        .popup-value { color: #fff; font-weight: 500; }
-        .popup-footer { padding: 10px; border-top: 1px solid #444; display: flex; justify-content: space-between; }
-        .action-icon { font-size: 18px; cursor: pointer; color: #4CAF50; }
-        
-        .device-marker { transition: transform 0.3s ease-out, all 0.3s; }
+        .leaflet-popup-content-wrapper { background: #212121; color: #fff; border-radius: 8px; padding: 0; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
+        .leaflet-popup-content { margin: 0; width: 220px !important; }
+        .popup-header { padding: 10px 12px; background: #27272a; border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: bold; font-size: 13px; border-bottom: 1px solid #3f3f46; }
+        .popup-body { padding: 10px 12px; font-size: 11px; }
+        .popup-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .popup-label { color: #a1a1aa; }
+        .popup-value { color: #fff; font-weight: 600; }
       </style>
     </head>
     <body>
@@ -110,28 +125,21 @@ const MapScreen = ({ navigation, route }) => {
         var map = L.map('map', { zoomControl: false }).setView([20, 78], 5);
         
         var layers = {
-          standard: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-            attribution: '&copy; Google Maps'
-          }),
-          satellite: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
-            attribution: '&copy; Google Maps'
-          }),
-          terrain: L.tileLayer('https://mt1.google.com/vt/lyrs=t&x={x}&y={y}&z={z}', {
-            attribution: '&copy; Google Maps'
-          })
+          standard: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'),
+          satellite: L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'),
+          terrain: L.tileLayer('https://mt1.google.com/vt/lyrs=t&x={x}&y={y}&z={z}')
         };
         
         layers.standard.addTo(map);
         var markers = {};
-        var historyLayer = L.layerGroup().addTo(map);
         var isFirstFit = true;
         var myLocMarker = null;
 
         function getStatusColor(pos) {
           var isMoving = pos.motion_status === 'moving' || pos.motion_status === 'true' || pos.motion_status === true || pos.motion_status === 1 || pos.motion_status === '1';
-          if (isMoving) return '#4CAF50'; 
-          if (pos.status === 'online') return '#2196F3'; 
-          return '#F44336'; 
+          if (isMoving) return '#10b981'; // Green
+          if (pos.status === 'online') return '#0284c7'; // Blue
+          return '#ef4444'; // Red
         }
 
         function createCustomIcon(pos) {
@@ -139,40 +147,30 @@ const MapScreen = ({ navigation, route }) => {
           var rotation = pos.course || 0;
           return L.divIcon({
             className: 'custom-div-icon',
-            html: \`<div style="transform: rotate(\${rotation}deg); width: 30px; height: 30px; background: \${color}; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;">
-                    <div style="width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 8px solid white; margin-top: -4px;"></div>
-                   </div>\`,
+            html: '<div style="transform: rotate(' + rotation + 'deg); width: 30px; height: 30px; background: ' + color + '; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;"><div style="width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 8px solid white; margin-top: -4px;"></div></div>',
             iconSize: [30, 30],
             iconAnchor: [15, 15]
           });
         }
 
         function buildPopup(pos) {
-          var fixTime = pos.fixTime ? new Date(pos.fixTime).toLocaleString() : 'N/A';
-          var isMoving = pos.motion_status === 'moving' || pos.motion_status === 'true' || pos.motion_status === true || pos.motion_status === 1 || pos.motion_status === '1';
-          var motionText = isMoving ? 'Moving' : 'Stopped';
-          
-          var isDgOn = pos.dg_status === 1 || pos.dg_status === '1' || pos.dg_status?.toString().toLowerCase() === 'on' || pos.dg_status?.toString().toLowerCase() === 'true';
-          var dgText = isDgOn ? 'ON' : 'OFF';
-          
-          var isIgnOn = pos.ignition_status === 1 || pos.ignition_status === '1' || pos.ignition_status?.toString().toLowerCase() === 'on' || pos.ignition_status?.toString().toLowerCase() === 'true';
-          var ignText = isIgnOn ? 'ON' : 'OFF';
-
-          return \`
-            <div class="popup-header">\${pos.name}</div>
-            <div class="popup-body">
-              <div class="popup-row"><span class="popup-label">Status</span><span class="popup-value">\${pos.status.toUpperCase()}</span></div>
-              <div class="popup-row"><span class="popup-label">Motion</span><span class="popup-value">\${motionText}</span></div>
-              <div class="popup-row"><span class="popup-label">Battery</span><span class="popup-value" style="color:#10b981">\${pos.battery_level ? pos.battery_level + '%' : 'N/A'}</span></div>
-              <div class="popup-row"><span class="popup-label">DG Status</span><span class="popup-value">\${dgText}</span></div>
-              <div class="popup-row"><span class="popup-label">DG</span><span class="popup-value">\${ignText}</span></div>
-              <div class="popup-row"><span class="popup-label">Address</span><span class="popup-value" style="color:#2196F3">\${pos.address || (pos.latitude.toFixed(5) + ", " + pos.longitude.toFixed(5))}</span></div>
-              <div class="popup-row"><span class="popup-label">Fix Time</span><span class="popup-value">\${fixTime}</span></div>
-            </div>
-          \`;
+          var speedKmh = pos.speedKmh || 0;
+          var ignition = pos.ignition_status ? 'On' : 'Off';
+          var battery = pos.battery_level != null ? pos.battery_level + '%' : 'N/A';
+          var alarm = pos.alarm ? pos.alarm : '—';
+          var address = pos.address || 'Unknown';
+          return '<div class="popup-header">' + pos.name + '</div>' +
+                 '<div class="popup-body">' +
+                 '<div class="popup-row"><span class="popup-label">Status</span><span class="popup-value" style="color:' + getStatusColor(pos) + '">' + pos.status.toUpperCase() + '</span></div>' +
+                 '<div class="popup-row"><span class="popup-label">Speed</span><span class="popup-value">' + speedKmh + ' km/h</span></div>' +
+                 '<div class="popup-row"><span class="popup-label">Ignition</span><span class="popup-value">' + ignition + '</span></div>' +
+                 '<div class="popup-row"><span class="popup-label">Battery</span><span class="popup-value">' + battery + '</span></div>' +
+                 '<div class="popup-row"><span class="popup-label">Alarm</span><span class="popup-value">' + alarm + '</span></div>' +
+                 '<div class="popup-row"><span class="popup-label">DG</span><span class="popup-value">' + (pos.dg_status || 'N/A') + '</span></div>' +
+                 '<div class="popup-row"><span class="popup-label">Address</span><span class="popup-value">' + address + '</span></div>' +
+                 '</div>';
         }
 
-        // Global Dispatcher for React Native
         window.dispatchMapAction = function(actionStr) {
           try {
             var data = JSON.parse(actionStr);
@@ -180,19 +178,14 @@ const MapScreen = ({ navigation, route }) => {
             if (data.type === 'UPDATE_MARKERS') {
               var bounds = [];
               data.positions.forEach(function(pos) {
-                if (!pos.latitude || !pos.longitude || pos.latitude === 0 || pos.longitude === 0) {
-                  return;
-                }
+                if (!pos.latitude || !pos.longitude) return;
                 var latlng = [pos.latitude, pos.longitude];
+                
                 if (markers[pos.deviceId]) {
                   markers[pos.deviceId].setLatLng(latlng);
                   markers[pos.deviceId].setIcon(createCustomIcon(pos));
-                  if (markers[pos.deviceId].isPopupOpen()) {
-                    markers[pos.deviceId].setPopupContent(buildPopup(pos));
-                  }
                 } else {
                   markers[pos.deviceId] = L.marker(latlng, { icon: createCustomIcon(pos) }).addTo(map);
-                  markers[pos.deviceId].bindPopup(buildPopup(pos), { offset: [0, -10] });
                   markers[pos.deviceId].on('click', function() {
                     window.ReactNativeWebView.postMessage(JSON.stringify({type: 'MARKER_CLICK', id: pos.deviceId}));
                   });
@@ -207,28 +200,8 @@ const MapScreen = ({ navigation, route }) => {
             }
 
             if (data.type === 'FOCUS_DEVICE') {
-              if (!data.lat || !data.lng || data.lat === 0 || data.lng === 0) return;
+              if (!data.lat || !data.lng) return;
               map.setView([data.lat, data.lng], 16);
-              if (markers[data.deviceId]) {
-                if (data.address) {
-                  // Temporarily update marker popup with fresh address
-                  markers[data.deviceId].bindPopup(buildPopup({
-                    deviceId: data.deviceId,
-                    latitude: data.lat,
-                    longitude: data.lng,
-                    name: data.name || 'Device', 
-                    status: data.status || 'online',
-                    motion_status: data.motion_status,
-                    battery_level: data.battery_level,
-                    dg_status: data.dg_status,
-                    ignition_status: data.ignition_status,
-                    fixTime: data.fixTime || new Date().toISOString(),
-                    address: data.address
-                  })).openPopup();
-                } else {
-                  markers[data.deviceId].openPopup();
-                }
-              }
             }
 
             if (data.type === 'SET_LAYER') {
@@ -241,59 +214,25 @@ const MapScreen = ({ navigation, route }) => {
 
             if (data.type === 'LOCATE_ME_NATIVE') {
               var latlng = [data.lat, data.lng];
-              map.setView(latlng, 16);
+              if (!data.noPan) map.setView(latlng, 16);
               if(myLocMarker) map.removeLayer(myLocMarker);
               myLocMarker = L.circleMarker(latlng, {
                 radius: 8, fillColor: '#2196F3', color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.9
-              }).addTo(map).bindPopup("You are here").openPopup();
-            }
-
-            if (data.type === 'SHOW_HISTORY') {
-              historyLayer.clearLayers();
-              if (data.coords && data.coords.length > 0) {
-                var poly = L.polyline(data.coords, { color: '#1E88E5', weight: 4, opacity: 0.8 }).addTo(historyLayer);
-                
-                // Start Marker (Green)
-                L.circleMarker(data.coords[0], { radius: 6, fillColor: '#4CAF50', color: '#fff', weight: 2, fillOpacity: 1 }).addTo(historyLayer).bindPopup("<b>TRIP START</b><br>" + data.startTime);
-                
-                // End Marker (Red)
-                L.circleMarker(data.coords[data.coords.length - 1], { radius: 6, fillColor: '#F44336', color: '#fff', weight: 2, fillOpacity: 1 }).addTo(historyLayer).bindPopup("<b>TRIP END</b><br>" + data.endTime);
-                
-                map.fitBounds(poly.getBounds(), { padding: [40, 40] });
-              }
-            }
-
-            if (data.type === 'CLEAR_HISTORY') {
-              historyLayer.clearLayers();
+              }).addTo(map);
             }
           } catch(e) {
             window.ReactNativeWebView.postMessage(JSON.stringify({type: 'ERROR', msg: e.message}));
           }
         };
 
-        // Current Location Handlers
-        map.on('locationfound', function(e) {
-          if(myLocMarker) map.removeLayer(myLocMarker);
-          myLocMarker = L.circleMarker(e.latlng, {
-            radius: 8, fillColor: '#2196F3', color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.9
-          }).addTo(map).bindPopup("You are here").openPopup();
-        });
-
-        map.on('locationerror', function(e) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({type: 'ERROR', msg: 'Could not find location. Please enable GPS.'}));
-        });
-
-        // Notify ready
         setTimeout(function() {
           window.ReactNativeWebView.postMessage(JSON.stringify({type: 'MAP_READY'}));
         }, 500);
-
       </script>
     </body>
     </html>
   `, []);
 
-  // ─── ROBUST COMMUNICATION ───────────────────────────────────────────────────
   const sendToMap = useCallback((type, payload = {}) => {
     if (!webViewRef.current) return;
     const actionStr = JSON.stringify({ type, ...payload });
@@ -302,428 +241,371 @@ const MapScreen = ({ navigation, route }) => {
 
   // ─── DATA SYNC ──────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+      if (isFetchingRef.current) return;
+      isFetchingRef.current = true;
 
-    try {
-      const data = await fetchDeviceList();
-      const devicesData = data.devices || [];
+      try {
+        const data = await fetchDeviceList();
+        const devicesData = data.devices || [];
 
-      setDevices(devicesData);
-      const posMap = {};
-      const prevPosMap = prevPositionsRef.current;
-      
-      devicesData.forEach((device) => { 
-        // Build position object for each device to be in sync with what Leaflet expects
-        const prevPosForDevice = prevPosMap[device.id];
-        const pos = {
-          deviceId:        device.id,
-          latitude:        parseFloat(device.motion_lat) || 0,
-          longitude:       parseFloat(device.motion_lon) || 0,
-          name:            device.name || 'Unknown',
-          status:          device.status || 'unknown',
-          motion_status:   device.motion_status,
-          battery_level:   device.battery_level,
-          dg_status:       device.dg_status,
-          ignition_status: device.ignition_status,
-          battery_status:  device.battery_status,
-          fixTime:         device.position_time,
-          address:         prevPosForDevice?.address || null, // Preserve resolved address
-        };
-        
-        posMap[device.id] = pos; 
-        
-        // The cached status will be preserved
-        const currentStatus = device.status || 'offline';
-        pos.__status = currentStatus; 
-      });
-      
-      prevPositionsRef.current = posMap;
-      setPositions(posMap);
+        setDevices(devicesData);
+        const posMap = {};
+        const prevPosMap = prevPositionsRef.current;
 
-      // Only fetch alarms for active/online devices, and only every 20 seconds to prevent network choke
-      const now = Date.now();
-      const shouldFetchAlarms = isFirstAlarmsFetchRef.current || (now - lastAlarmsFetchRef.current >= 20000);
-
-      if (shouldFetchAlarms) {
-        lastAlarmsFetchRef.current = now;
-        const activeDevices = devicesData.filter(d => d.status === 'online');
-        const devicesAlarms = [];
-
-        for (const device of activeDevices) {
-          try {
-            const alarmList = await fetchAlarms(device.id);
-            devicesAlarms.push({ deviceId: device.id, alarms: alarmList || [] });
-            // A tiny 30ms sleep between requests keeps the single-threaded server responsive
-            await new Promise(resolve => setTimeout(resolve, 30));
-          } catch (e) {
-            if (e.message !== 'Network Error') {
-              console.warn(`[Alarms API] Fetch error for device ${device.id}:`, e.message);
-            }
-            devicesAlarms.push({ deviceId: device.id, alarms: [] });
-          }
-        }
-
-        devicesAlarms.forEach(({ deviceId, alarms }) => {
-          const name = posMap[deviceId]?.name || `Device ${deviceId}`;
-          
-          // Sort alarms by ID ascending so older alarms are processed first
-          const sortedAlarms = [...alarms].sort((a, b) => a.id - b.id);
-          
-          sortedAlarms.forEach((alarm) => {
-            if (!seenAlarmsRef.current.has(alarm.id)) {
-              seenAlarmsRef.current.add(alarm.id);
-              
-              // Only trigger push notifications on new alarms appearing after initial boot sync is complete
-              if (isFirstAlarmsFetchRef.current === false) {
-                const parsed = AlertNotificationService.parseAlarm(alarm, name);
-                if (parsed) {
-                  displayNotification(parsed.title, parsed.body, parsed.timestamp);
-                }
-              }
-            }
-          });
-        });
-
-        // After first sync pass is complete, set isFirstAlarmsFetchRef to false
-        if (isFirstAlarmsFetchRef.current) {
-          devicesAlarms.forEach(({ alarms }) => {
-            alarms.forEach(alarm => seenAlarmsRef.current.add(alarm.id));
-          });
-          isFirstAlarmsFetchRef.current = false;
-        }
-      }
-
-      if (mapReady) {
-        const updateData = devicesData.map(device => {
-          const prevPosForDevice = prevPositionsRef.current[device.id];
-          return {
-            deviceId:        device.id,
-            latitude:        parseFloat(device.motion_lat) || 0,
-            longitude:       parseFloat(device.motion_lon) || 0,
-            name:            device.name || 'Unknown',
-            status:          device.status || 'offline',
-            motion_status:   device.motion_status,
-            battery_level:   device.battery_level,
-            dg_status:       device.dg_status,
+        // Build position objects with telemetry and address (fallback to previous address)
+        devicesData.forEach((device) => {
+          const prevPosForDevice = prevPosMap[device.id];
+          const pos = {
+            deviceId: device.id,
+            latitude: parseFloat(device.motion_lat) || 0,
+            longitude: parseFloat(device.motion_lon) || 0,
+            name: device.name || 'Unknown',
+            status: device.status || 'unknown',
+            motion_status: device.motion_status,
+            battery_level: device.battery_level,
+            dg_status: device.dg_status,
             ignition_status: device.ignition_status,
-            fixTime:         device.position_time,
-            address:         prevPosForDevice?.address || null, // Preserve resolved address
+            battery_status: device.battery_status,
+            fixTime: device.position_time,
+            address: device.address || prevPosForDevice?.address || null,
+            speedKmh: device.speedKmh ?? device.speed ?? 0,
+            alarm: device.alarm ?? null,
           };
+          posMap[device.id] = pos;
         });
 
-        sendToMap('UPDATE_MARKERS', { positions: updateData });
+        prevPositionsRef.current = posMap;
+        setPositions(posMap);
 
-        if (followMode && selectedDeviceId) {
-          const pos = posMap[selectedDeviceId];
-          if (pos) {
-            sendToMap('FOCUS_DEVICE', { 
-              deviceId:        selectedDeviceId, 
-              lat:             pos.latitude, 
-              lng:             pos.longitude,
-              name:            pos.name,
-              status:          pos.status,
-              motion_status:   pos.motion_status,
-              battery_level:   pos.battery_level,
-              dg_status:       pos.dg_status,
-              ignition_status: pos.ignition_status,
-              fixTime:         pos.fixTime,
-              address:         pos.address
-            });
-          }
+        // If map is ready, send initial markers and focus nearest device
+        if (mapReady) {
+          sendToMap('UPDATE_MARKERS', { positions: Object.values(posMap) });
+          focusNearestDevice(Object.values(posMap));
+          // Auto-show user's current location blue dot
+          showMyLocation();
         }
+
+        const now = Date.now();
+        // Placeholder for alarm fetching logic.
+        // Update lastAlarmsFetchRef to current time.
+        lastAlarmsFetchRef.current = now;
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        isFetchingRef.current = false;
+        setLoading(false);
       }
-      setLoading(false);
-    } catch (error) {
-      if (error.message !== 'Network Error') {
-        console.warn('Sync Error:', error);
+    }, [mapReady]);
+
+    // Helper to compute haversine distance
+    const haversine = (lat1, lon1, lat2, lon2) => {
+      const toRad = (deg) => (deg * Math.PI) / 180;
+      const R = 6371; // km
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+      return R * 2 * Math.asin(Math.sqrt(a));
+    };
+
+const focusNearestDevice = (positionsArray) => {
+  Geolocation.getCurrentPosition(
+    (loc) => {
+      const { latitude: myLat, longitude: myLon } = loc.coords;
+      let nearest = null;
+      let minDist = Infinity;
+      positionsArray.forEach((p) => {
+        if (!p.latitude || !p.longitude) return;
+        const d = haversine(myLat, myLon, p.latitude, p.longitude);
+        if (d < minDist) {
+          minDist = d;
+          nearest = p;
+        }
+      });
+      if (nearest) {
+        sendToMap('FOCUS_DEVICE', { lat: nearest.latitude, lng: nearest.longitude });
       }
-    } finally {
-      isFetchingRef.current = false;
-    }
-  }, [mapReady, followMode, selectedDeviceId, sendToMap]);
+    },
+    (err) => {
+      console.warn('Geolocation error', err);
+    },
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
+  );
+};
 
   useEffect(() => {
-    // Request notification permissions for Android 13+ / iOS
     notifee.requestPermission();
-    
     const unsubNet = NetInfo.addEventListener(state => setIsOnline(state.isConnected));
-    fetchData(); // Run immediately
-    const interval = setInterval(fetchData, REFRESH_INTERVAL);
-    return () => { clearInterval(interval); unsubNet(); };
+    fetchData();
+    // const interval = setInterval(fetchData, REFRESH_INTERVAL);
+    return () => { unsubNet(); };
   }, [fetchData]);
 
-  // ─── HANDLE INCOMING FOCUS OR HISTORY REQUEST ───
+  // Handle params focus
   useEffect(() => {
     if (route.params?.focusDevice) {
       const device = route.params.focusDevice;
       setTimeout(() => focusDevice(device), 1000);
       navigation.setParams({ focusDevice: undefined });
     }
-    
-    if (route.params?.historyData) {
-      const { coords, startTime, endTime } = route.params.historyData;
-      setTimeout(() => {
-        sendToMap('SHOW_HISTORY', { coords, startTime, endTime });
-      }, 1500);
-      navigation.setParams({ historyData: undefined });
-    }
-  }, [route.params, mapReady, focusDevice, sendToMap]);
+  }, [route.params, mapReady]);
 
-  // Handle incoming messages from WebView
   const onMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       if (data.type === 'MAP_READY') {
         setMapReady(true);
+        setLoading(false);
+        // When map is ready, send markers and focus nearest device
+        if (Object.keys(positions).length > 0) {
+          sendToMap('UPDATE_MARKERS', { positions: Object.values(positions) });
+          focusNearestDevice(Object.values(positions));
+        }
+        // Auto-show user's current location blue dot
+        showMyLocation();
       } else if (data.type === 'MARKER_CLICK') {
-        setSelectedDeviceId(data.id);
         const dev = devices.find(d => d.id === data.id);
         if (dev) {
           focusDevice(dev);
         }
-      } else if (data.type === 'ERROR') {
-        Alert.alert('Map Info', data.msg);
       }
     } catch (e) {}
   };
 
-  // ─── ACTIONS ────────────────────────────────────────────────────────────────
   const focusDevice = async (device) => {
-    const pos = positions[device.id];
-    if (pos && mapReady) {
-      setSelectedDeviceId(device.id);
-      
-      // Fetch address ONLY when focused to avoid rate limiting
-      let addr = pos.address;
-      if (!addr) {
-        addr = await reverseGeocode(pos.latitude, pos.longitude);
-        // Update local state so it shows in popup next time
-        setPositions(prev => ({
-          ...prev,
-          [device.id]: { ...pos, address: addr }
-        }));
-        // Update ref immediately so fetchData preserves it
-        if (prevPositionsRef.current[device.id]) {
-          prevPositionsRef.current[device.id].address = addr;
-        }
-      }
+    setSelectedDeviceId(device.id);
+    const lat = parseFloat(device.motion_lat) || 0;
+    const lng = parseFloat(device.motion_lon) || 0;
+    if (lat !== 0 && mapReady) {
+      sendToMap('FOCUS_DEVICE', { deviceId: device.id, lat, lng });
 
-      sendToMap('FOCUS_DEVICE', { 
-        deviceId:        device.id, 
-        lat:             pos.latitude, 
-        lng:             pos.longitude,
-        name:            pos.name,
-        status:          pos.status,
-        motion_status:   pos.motion_status,
-        battery_level:   pos.battery_level,
-        dg_status:       pos.dg_status,
-        ignition_status: pos.ignition_status,
-        fixTime:         pos.fixTime,
-        address:         addr // Pass fresh address
-      });
-      if (isExpanded) toggleBottomSheet();
-    } else {
-      Alert.alert('Info', 'No GPS position found for this device yet.');
-    }
-  };
-
-  const locateMe = async () => {
-    const requestLoc = () => {
-      Geolocation.getCurrentPosition(
-        position => {
-          sendToMap('LOCATE_ME_NATIVE', {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        error => Alert.alert('Location Error', 'Make sure GPS is enabled on your device.'),
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
-      );
-    };
-
-    if (Platform.OS === 'android') {
-      try {
-        const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Location Permission Required',
-            message: 'App needs access to your location to show where you are on the map.',
-            buttonNeutral: 'Ask Me Later',
-            buttonNegative: 'Cancel',
-            buttonPositive: 'OK',
-          },
-        );
-        if (granted === PermissionsAndroid.RESULTS.GRANTED) {
-          requestLoc();
+      // Fetch Address
+      const pos = positions[device.id];
+      if (pos && !pos.address) {
+        if (device.address) {
+          setPositions(prev => ({
+            ...prev,
+            [device.id]: { ...pos, address: device.address }
+          }));
+          if (prevPositionsRef.current[device.id]) {
+            prevPositionsRef.current[device.id].address = device.address;
+          }
         } else {
-          Alert.alert('Permission Denied', 'Cannot find your location without permission.');
+          const addr = await reverseGeocode(lat, lng);
+          setPositions(prev => ({
+            ...prev,
+            [device.id]: { ...pos, address: addr }
+          }));
+          if (prevPositionsRef.current[device.id]) {
+            prevPositionsRef.current[device.id].address = addr;
+          }
         }
-      } catch (err) {
-        console.warn(err);
       }
-    } else {
-      requestLoc();
     }
   };
 
-  const toggleBottomSheet = () => {
-    const toValue = isExpanded ? 220 : height * 0.75;
-    Animated.spring(bottomSheetHeight, { toValue, useNativeDriver: false }).start();
-    setIsExpanded(!isExpanded);
+  // Auto-center and show blue dot on user's current location
+  const showMyLocation = useCallback(() => {
+    Geolocation.getCurrentPosition(
+      position => {
+        sendToMap('LOCATE_ME_NATIVE', {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          // noPan not set → map will pan to user location
+        });
+      },
+      () => {},
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  }, [sendToMap]);
+
+  // Button press: same behavior
+  const locateMe = () => {
+    Geolocation.getCurrentPosition(
+      position => {
+        sendToMap('LOCATE_ME_NATIVE', {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        });
+      },
+      error => Alert.alert('Location Error', 'GPS might be disabled.'),
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
   };
 
-  // ─── FILTERED LIST ──────────────────────────────────────────────────────────
-  const filteredDevices = useMemo(() => {
-    return devices.filter(d => {
-      const matchesSearch = d.name.toLowerCase().includes(searchQuery.toLowerCase()) || (d.iccid || '').toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesStatus = filter === 'all' || d.status === filter;
-      return matchesSearch && matchesStatus;
+  // Actions
+  const openNavigation = () => {
+    if (!selectedDevice) return;
+    const lat = parseFloat(selectedDevice.motion_lat);
+    const lon = parseFloat(selectedDevice.motion_lon);
+    const url = Platform.select({
+      ios: `maps:0,0?q=${lat},${lon}`,
+      android: `geo:0,0?q=${lat},${lon}`
     });
-  }, [devices, searchQuery, filter]);
+    Linking.openURL(url).catch(() => Alert.alert('Error', 'Failed to launch Maps'));
+  };
+
+  const handleSendCommand = () => {
+    Alert.alert('Send Command', 'Command system is under development.');
+  };
+
+  // Autocomplete / Search filters
+  const filteredSearchList = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    return devices.filter(d =>
+      d.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (d.iccid || '').toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [devices, searchQuery]);
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="transparent" translucent />
 
-      {/* ─── WEBVIEW LEAFLET CORE ─── */}
+      {/* Map */}
       <WebView
         ref={webViewRef}
         originWhitelist={['*']}
         source={{ html: mapHtml }}
         style={styles.map}
         onMessage={onMessage}
-        javaScriptEnabled={true}
-        domStorageEnabled={true}
-        geolocationEnabled={true}
+        javaScriptEnabled
+        domStorageEnabled
+        geolocationEnabled
       />
 
-      {/* ─── FLOATING DASHBOARD CONTROLS ─── */}
-      <View style={[styles.controlsContainer, { top: insets.top + 10 }]}>
-        <View style={styles.controlGroup}>
-          <TouchableOpacity style={styles.controlBtn} onPress={() => sendToMap('ZOOM_IN')}>
-            <Icon name="plus" size={24} color="#333" />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.controlBtn} onPress={() => sendToMap('ZOOM_OUT')}>
-            <Icon name="minus" size={24} color="#333" />
-          </TouchableOpacity>
+      {/* Floating Header Search Box */}
+      <View style={[styles.searchBoxWrapper, { top: insets.top + 10 }]}>
+        <View style={styles.searchBar}>
+          <Icon name="magnify" size={22} color="#64748b" style={{ marginRight: 8 }} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search vehicles..."
+            value={searchQuery}
+            onChangeText={(t) => {
+              setSearchQuery(t);
+              setShowSearchResults(t.length > 0);
+            }}
+            placeholderTextColor="#94a3b8"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => { setSearchQuery(''); setShowSearchResults(false); }}>
+              <Icon name="close-circle" size={20} color="#64748b" />
+            </TouchableOpacity>
+          )}
         </View>
 
-        <View style={styles.controlGroup}>
-          <TouchableOpacity style={styles.controlBtn} onPress={locateMe}>
-            <Icon name="crosshairs-gps" size={22} color="#1E88E5" />
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={[styles.controlBtn, followMode && styles.activeBtn]} 
-            onPress={() => setFollowMode(!followMode)}
-          >
-            <Icon name={followMode ? "navigation" : "navigation-outline"} size={22} color={followMode ? "#FFF" : "#333"} />
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.controlBtn} onPress={fetchData}>
-            <Icon name="refresh" size={22} color="#333" />
-          </TouchableOpacity>
-        </View>
+        {showSearchResults && filteredSearchList.length > 0 && (
+          <View style={styles.searchResultsDropdown}>
+            <FlatList
+              data={filteredSearchList}
+              keyExtractor={item => item.id.toString()}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.searchResultItem}
+                  onPress={() => {
+                    focusDevice(item);
+                    setSearchQuery('');
+                    setShowSearchResults(false);
+                  }}
+                >
+                  <Icon name="car" size={18} color="#64748b" style={{ marginRight: 10 }} />
+                  <Text style={styles.searchResultText}>{item.name}</Text>
+                  <View style={[styles.statusDot, { backgroundColor: item.status === 'online' ? '#10b981' : '#ef4444', marginLeft: 'auto' }]} />
+                </TouchableOpacity>
+              )}
+              style={{ maxHeight: 200 }}
+            />
+          </View>
+        )}
+      </View>
 
-        <TouchableOpacity 
-          style={styles.controlBtn} 
-          onPress={() => {
-            const next = mapLayer === 'standard' ? 'satellite' : mapLayer === 'satellite' ? 'terrain' : 'standard';
-            setMapLayer(next);
-            sendToMap('SET_LAYER', { layer: next });
-          }}
-        >
-          <Icon name="layers-outline" size={22} color="#333" />
+      {/* Floating Side Action buttons (Layer, Locate, Refresh) */}
+      <View style={styles.sideControls}>
+        <TouchableOpacity style={styles.circleButton} onPress={() => {
+          const next = mapLayer === 'standard' ? 'satellite' : mapLayer === 'satellite' ? 'terrain' : 'standard';
+          setMapLayer(next);
+          sendToMap('SET_LAYER', { layer: next });
+        }}>
+          <Icon name="layers-outline" size={20} color="#0f172a" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.circleButton} onPress={locateMe}>
+          <Icon name="crosshairs-gps" size={20} color="#0284c7" />
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.circleButton, followMode && styles.activeCircleButton]} onPress={() => setFollowMode(!followMode)}>
+          <Icon name="navigation" size={20} color={followMode ? '#FFFFFF' : '#0f172a'} />
         </TouchableOpacity>
       </View>
 
-      {/* ─── STATUS BAR ─── */}
+      {/* Offline sync banner */}
       {!isOnline && (
         <View style={styles.offlineBar}>
           <Text style={styles.offlineText}>SYNCING WITH SERVER...</Text>
         </View>
       )}
 
-      {/* ─── PROFESSIONAL BOTTOM DASHBOARD ─── */}
-      <Animated.View style={[styles.bottomSheet, { height: bottomSheetHeight }]}>
-        <TouchableOpacity style={styles.dragHandler} onPress={toggleBottomSheet}>
-          <View style={styles.dragBar} />
-        </TouchableOpacity>
+      {/* REDESIGNED: Sleek Action Panel */}
+      {selectedDevice && (
+        <Animated.View style={[styles.actionPanel, { transform: [{ translateY: slideAnim }], paddingBottom: insets.bottom + 16 }]}>
+          {/* Grab handle / header */}
+          <View style={styles.panelHeader}>
+            <View style={styles.panelTitleContainer}>
+              <Text style={styles.panelTitle}>{selectedDevice.name}</Text>
+              <Text style={styles.panelSubtitle}>{selectedDevice.iccid || 'No IMEI'}</Text>
+            </View>
+            <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedDeviceId(null)}>
+              <Icon name="close" size={20} color="#64748b" />
+            </TouchableOpacity>
+          </View>
 
-        <View style={styles.sheetHeader}>
-          <View style={styles.titleRow}>
-            <Text style={styles.sheetTitle}>Traccar Dashboard</Text>
-            <View style={styles.filterRow}>
-              {['all', 'online', 'offline'].map(f => (
-                <TouchableOpacity key={f} onPress={() => setFilter(f)} style={[styles.filterChip, filter === f && styles.activeChip]}>
-                  <Text style={[styles.filterChipText, filter === f && styles.activeChipText]}>{f.toUpperCase()}</Text>
-                </TouchableOpacity>
-              ))}
+          {/* Quick status bar inside panel */}
+          <View style={styles.statusMetricsRow}>
+            <View style={styles.metricItem}>
+              <Icon name="speedometer" size={14} color="#64748b" />
+              <Text style={styles.metricText}>{selectedDevice.speedKmh || 0} km/h</Text>
+            </View>
+            <View style={styles.metricItem}>
+              <Icon name="battery" size={14} color="#10b981" />
+              <Text style={styles.metricText}>{selectedDevice.battery_level ? `${selectedDevice.battery_level}%` : 'N/A'}</Text>
+            </View>
+            <View style={[styles.statusDotLabel, { backgroundColor: selectedDevice.status === 'online' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)' }]}>
+              <View style={[styles.dotIndicator, { backgroundColor: selectedDevice.status === 'online' ? '#10b981' : '#ef4444' }]} />
+              <Text style={[styles.dotLabelText, { color: selectedDevice.status === 'online' ? '#10b981' : '#ef4444' }]}>
+                {selectedDevice.status === 'online' ? 'ONLINE' : 'OFFLINE'}
+              </Text>
             </View>
           </View>
-          
-          <View style={styles.searchContainer}>
-            <Icon name="magnify" size={20} color="#999" />
-            <TextInput 
-              style={styles.searchInput}
-              placeholder="Search devices..."
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholderTextColor="#999"
-            />
-          </View>
-        </View>
 
-        <FlatList
-          data={filteredDevices}
-          keyExtractor={item => (item.id?.toString() ?? Math.random().toString())}
-          renderItem={({ item }) => {
-            const isMoving = item.motion_status === 'moving' || item.motion_status === 'true' || item.motion_status === true || item.motion_status === 1 || item.motion_status === '1';
-            return (
-              <TouchableOpacity 
-                style={[styles.deviceItem, selectedDeviceId === item.id && styles.selectedItem]} 
-                onPress={() => focusDevice(item)}
-              >
-                <View style={styles.deviceItemLeft}>
-                  <View style={[styles.statusIndicator, { backgroundColor: item.status === 'online' ? '#4CAF50' : '#F44336' }]} />
-                  <View style={styles.iconCircle}>
-                    <Icon name="car-outline" size={24} color="#555" />
-                  </View>
-                  <View style={{ marginLeft: 12 }}>
-                    <Text style={styles.deviceNameText}>{item.name}</Text>
-                    <Text style={styles.deviceMetaText}>{item.iccid || item.uniqueId || 'No IMEI'} • {item.status}</Text>
-                  </View>
+          <Text style={styles.addressLine} numberOfLines={1}>
+            📍 {positions[selectedDeviceId]?.address || 'Resolving address...'}
+          </Text>
+
+          <View style={styles.panelDivider} />
+
+          {/* 6 Actions Grid */}
+          <View style={styles.actionsGrid}>
+            {[
+              { label: 'Detail', icon: 'card-bulleted-settings-outline', action: () => navigation.navigate('DetailInfo', { device: selectedDevice }) },
+              { label: 'Tracking', icon: 'crosshairs-gps', action: () => navigation.navigate('Tracking', { device: selectedDevice }) },
+              { label: 'Playback', icon: 'history', action: () => navigation.navigate('Playback', { device: selectedDevice }) },
+              { label: 'Navigation', icon: 'google-maps', action: openNavigation }
+            ].map((btn, idx) => (
+              <TouchableOpacity key={idx} style={styles.actionGridItem} onPress={btn.action}>
+                <View style={styles.actionIconBox}>
+                  <Icon name={btn.icon} size={22} color="#1565C0" />
                 </View>
-                <View style={styles.deviceItemRight}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
-                    <Icon 
-                      name={item.battery_level ? "battery" : "battery-off"} 
-                      size={16} 
-                      color="#64748b" 
-                      style={{ marginRight: 4 }} 
-                    />
-                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: '#64748b', marginRight: 10 }}>
-                      {item.battery_level ? `${item.battery_level}%` : 'N/A'}
-                    </Text>
-                    
-                    <Icon 
-                      name={isMoving ? "run" : "car-brake-park"} 
-                      size={18} 
-                      color={isMoving ? "#f59e0b" : "#94a3b8"} 
-                    />
-                  </View>
-                  <Icon name="chevron-right" size={20} color="#CCC" />
-                </View>
+                <Text style={styles.actionLabel}>{btn.label}</Text>
               </TouchableOpacity>
-            );
-          }}
-          contentContainerStyle={{ paddingBottom: 100 }}
-        />
-      </Animated.View>
+            ))}
+          </View>
+        </Animated.View>
+      )}
 
       {loading && (
         <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#1E88E5" />
-          <Text style={{ marginTop: 10, color: '#1E88E5', fontWeight: 'bold' }}>LOADING MAP...</Text>
+          <ActivityIndicator size="large" color="#1565C0" />
+          <Text style={styles.loadingText}>SYNCHRONIZING FLEET...</Text>
         </View>
       )}
     </View>
@@ -733,35 +615,110 @@ const MapScreen = ({ navigation, route }) => {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FFF' },
   map: { flex: 1 },
-  controlsContainer: { position: 'absolute', right: 16, zIndex: 100, alignItems: 'center' },
-  controlGroup: { backgroundColor: '#FFF', borderRadius: 8, elevation: 5, marginBottom: 12, overflow: 'hidden' },
-  controlBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFF', borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
-  activeBtn: { backgroundColor: '#1E88E5' },
-  bottomSheet: { position: 'absolute', bottom: 0, left: 0, right: 0, backgroundColor: '#FFF', borderTopLeftRadius: 25, borderTopRightRadius: 25, elevation: 25, shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.1, shadowRadius: 5 },
-  dragHandler: { width: '100%', height: 30, alignItems: 'center', justifyContent: 'center' },
-  dragBar: { width: 40, height: 4, backgroundColor: '#E0E0E0', borderRadius: 2 },
-  sheetHeader: { paddingHorizontal: 20, marginBottom: 15 },
-  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-  sheetTitle: { fontSize: 20, fontWeight: 'bold', color: '#1A1A1A' },
-  filterRow: { flexDirection: 'row', gap: 5 },
-  filterChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: '#F0F0F0' },
-  activeChip: { backgroundColor: '#1E88E5' },
-  filterChipText: { fontSize: 10, fontWeight: 'bold', color: '#666' },
-  activeChipText: { color: '#FFF' },
-  searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F5F5', borderRadius: 12, paddingHorizontal: 12 },
-  searchInput: { flex: 1, height: 44, marginLeft: 8, color: '#333', fontSize: 14 },
-  deviceItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#F9F9F9' },
-  selectedItem: { backgroundColor: '#F0F7FF', borderLeftWidth: 4, borderLeftColor: '#1E88E5' },
-  deviceItemLeft: { flexDirection: 'row', alignItems: 'center' },
-  iconCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F0F0F0', justifyContent: 'center', alignItems: 'center' },
-  statusIndicator: { width: 10, height: 10, borderRadius: 5, marginRight: 12 },
-  deviceNameText: { fontSize: 15, fontWeight: 'bold', color: '#333' },
-  deviceMetaText: { fontSize: 12, color: '#999', marginTop: 2 },
-  deviceItemRight: { flexDirection: 'row', alignItems: 'center' },
-  speedText: { marginRight: 10, fontSize: 14, fontWeight: 'bold', color: '#1E88E5' },
-  offlineBar: { position: 'absolute', top: 120, alignSelf: 'center', backgroundColor: '#1E88E5', paddingHorizontal: 15, paddingVertical: 6, borderRadius: 20, elevation: 5 },
-  offlineText: { color: '#FFF', fontSize: 10, fontWeight: 'bold', letterSpacing: 1 },
-  loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
+  searchBoxWrapper: { position: 'absolute', left: 16, right: 16, zIndex: 100 },
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 28,
+    paddingHorizontal: 16,
+    height: 48,
+    elevation: 6,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  searchInput: { flex: 1, height: '100%', color: '#0f172a', fontSize: 14, fontWeight: '500' },
+  searchResultsDropdown: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    marginTop: 8,
+    paddingVertical: 8,
+    elevation: 8,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  searchResultItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  searchResultText: { fontSize: 14, fontWeight: '600', color: '#1e293b' },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+  sideControls: { position: 'absolute', right: 16, top: 150, zIndex: 90, gap: 10 },
+  circleButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 4,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  activeCircleButton: { backgroundColor: '#0284c7', borderColor: '#0284c7' },
+  offlineBar: { position: 'absolute', top: 120, alignSelf: 'center', backgroundColor: '#ef4444', paddingHorizontal: 15, paddingVertical: 6, borderRadius: 20, elevation: 5 },
+  offlineText: { color: '#FFF', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
+  loadingText: { marginTop: 12, color: '#1565C0', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
+
+  // Sleek Bottom Action Panel
+  actionPanel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    elevation: 24,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: -6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+  },
+  panelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+  panelTitleContainer: { flex: 1 },
+  panelTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
+  panelSubtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
+  closeBtn: { padding: 6, backgroundColor: '#f1f5f9', borderRadius: 20 },
+  statusMetricsRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 10 },
+  metricItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  metricText: { fontSize: 12, fontWeight: '600', color: '#475569' },
+  statusDotLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12 },
+  dotIndicator: { width: 6, height: 6, borderRadius: 3 },
+  dotLabelText: { fontSize: 10, fontWeight: '700' },
+  addressLine: { fontSize: 12, color: '#64748b', marginBottom: 14 },
+  panelDivider: { height: 1, backgroundColor: '#f1f5f9', marginBottom: 14 },
+  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 },
+  actionGridItem: { width: '30%', alignItems: 'center', marginBottom: 12 },
+  actionIconBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: '#eff6ff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  actionLabel: { fontSize: 11, fontWeight: '600', color: '#334155' },
 });
 
 export default MapScreen;

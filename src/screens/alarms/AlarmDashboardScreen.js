@@ -214,8 +214,9 @@ const AlarmDashboardScreen = ({ navigation }) => {
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(() => loadData(false), 120000); // 2 mins
-    return () => clearInterval(interval);
+    // Auto refresh removed to reduce server load
+    // const interval = setInterval(() => loadData(false), 120000); // 2 mins
+    // return () => clearInterval(interval);
   }, [loadData]);
 
   // ── Derived stats ──

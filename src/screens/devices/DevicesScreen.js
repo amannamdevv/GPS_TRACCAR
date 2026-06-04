@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -7,13 +7,17 @@ import {
   Text,
   ActivityIndicator,
   TouchableOpacity,
+  StatusBar,
 } from 'react-native';
-import Icon from 'react-native-vector-icons/MaterialIcons';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Header from '../../components/Header';
 import DeviceCard from '../../components/DeviceCard';
 import { fetchDeviceList } from '../../api/webApi';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const DevicesScreen = ({ navigation }) => {
+  const insets = useSafeAreaInsets();
+
   const [allDevices, setAllDevices] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -22,7 +26,6 @@ const DevicesScreen = ({ navigation }) => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('All'); // 'All', 'Online', 'Offline'
 
-  // ─── FETCH ────────────────────────────────────────────────────────────────
   const fetchDevices = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
@@ -30,24 +33,7 @@ const DevicesScreen = ({ navigation }) => {
 
     try {
       const data = await fetchDeviceList();
-      const mapped = (data.devices || []).map((device) => {
-        return {
-          id:             device.id,
-          name:           device.name || 'Unknown Device',
-          iccid:          device.iccid || 'N/A',
-          status:         device.status || 'unknown',
-          position_time:  device.position_time,
-          battery_level:  device.battery_level,
-          motion_status:  device.motion_status,
-          dg_status:      device.dg_status,
-          battery_status: device.battery_status,
-          motion_lat:     device.motion_lat,
-          motion_lon:     device.motion_lon,
-          rssi:           device.rssi,
-          alarm:          device.alarm,
-        };
-      });
-      setAllDevices(mapped);
+      setAllDevices(data.devices || []);
     } catch (err) {
       setError(err.message || 'Failed to fetch devices');
     } finally {
@@ -58,36 +44,46 @@ const DevicesScreen = ({ navigation }) => {
 
   useEffect(() => {
     fetchDevices();
+    // Auto refresh removed to reduce server load
+    // const interval = setInterval(() => {
+    //   fetchDevices(true);
+    // }, 10000);
+    // return () => clearInterval(interval);
   }, [fetchDevices]);
 
-  // ─── FILTER ───────────────────────────────────────────────────────────────
-  const onlineCount = allDevices.filter((d) => d.status === 'online').length;
-  const offlineCount = allDevices.filter((d) => d.status === 'offline').length;
-  
-  let displayedDevices = allDevices;
-  if (activeTab === 'Online') {
-    displayedDevices = allDevices.filter(d => d.status === 'online');
-  } else if (activeTab === 'Offline') {
-    displayedDevices = allDevices.filter(d => d.status === 'offline');
-  }
+  // Counts
+  const onlineCount = useMemo(() => allDevices.filter(d => d.status === 'online').length, [allDevices]);
+  const offlineCount = useMemo(() => allDevices.filter(d => d.status !== 'online').length, [allDevices]);
 
-  if (searchQuery) {
-    displayedDevices = displayedDevices.filter((device) =>
-      device.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (device.iccid || '').toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }
+  // Filtering
+  const displayedDevices = useMemo(() => {
+    let list = allDevices;
+    if (activeTab === 'Online') {
+      list = allDevices.filter(d => d.status === 'online');
+    } else if (activeTab === 'Offline') {
+      list = allDevices.filter(d => d.status !== 'online');
+    }
 
-  // ─── RENDER TABS ──────────────────────────────────────────────────────────
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      list = list.filter(d =>
+        d.name.toLowerCase().includes(q) ||
+        (d.iccid || d.uniqueId || '').toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [allDevices, activeTab, searchQuery]);
+
   const renderTab = (title, count) => {
     const isActive = activeTab === title;
     return (
-      <TouchableOpacity 
-        style={[styles.tab, isActive && styles.activeTab]} 
+      <TouchableOpacity
+        style={[styles.tab, isActive && styles.activeTab]}
         onPress={() => setActiveTab(title)}
+        activeOpacity={0.7}
       >
         <Text style={[styles.tabText, isActive && styles.activeTabText]}>
-          {title}[{count}]
+          {title} ({count})
         </Text>
       </TouchableOpacity>
     );
@@ -95,12 +91,13 @@ const DevicesScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <Header 
-        title={`Device List(${allDevices.length})`} 
-        navigation={navigation} 
+      <StatusBar barStyle="dark-content" />
+      <Header
+        title="Fleet Status"
+        navigation={navigation}
         rightAction={
           <TouchableOpacity onPress={() => setShowSearch(!showSearch)} style={{ padding: 8 }}>
-            <Icon name="search" size={24} color="#FFFFFF" />
+            <Icon name="magnify" size={24} color="#FFFFFF" />
           </TouchableOpacity>
         }
       />
@@ -112,48 +109,46 @@ const DevicesScreen = ({ navigation }) => {
         {renderTab('Offline', offlineCount)}
       </View>
 
-      {/* Search bar */}
+      {/* Search Bar */}
       {showSearch && (
-        <View style={styles.searchContainer}>
-          <Icon name="search" size={20} color="#757575" style={styles.searchIcon} />
+        <View style={styles.searchBar}>
+          <Icon name="magnify" size={22} color="#64748b" style={{ marginRight: 8 }} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search by name, IMEI..."
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholderTextColor="#AAAAAA"
+            placeholderTextColor="#94a3b8"
             autoFocus
           />
           {searchQuery.length > 0 && (
-            <Icon
-              name="close"
-              size={20}
-              color="#757575"
-              onPress={() => setSearchQuery('')}
-            />
+            <TouchableOpacity onPress={() => setSearchQuery('')}>
+              <Icon name="close-circle" size={20} color="#64748b" />
+            </TouchableOpacity>
           )}
         </View>
       )}
 
-      {/* Loading */}
-      {loading && (
+      {/* Loading Overlay */}
+      {loading && !refreshing && (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#FF9800" />
+          <ActivityIndicator size="large" color="#1565C0" />
+          <Text style={styles.loadingText}>Synchronizing fleet devices...</Text>
         </View>
       )}
 
       {/* Error */}
       {!loading && error && (
         <View style={styles.center}>
-          <Icon name="error-outline" size={48} color="#F44336" />
+          <Icon name="alert-circle-outline" size={48} color="#ef4444" />
           <Text style={styles.errorText}>{error}</Text>
           <TouchableOpacity style={styles.retryBtn} onPress={() => fetchDevices()}>
-            <Text style={styles.retryBtnText}>Retry</Text>
+            <Text style={styles.retryBtnText}>Retry Connection</Text>
           </TouchableOpacity>
         </View>
       )}
 
-      {/* Device list */}
+      {/* Device List */}
       {!loading && !error && (
         <FlatList
           data={displayedDevices}
@@ -167,87 +162,53 @@ const DevicesScreen = ({ navigation }) => {
           refreshing={refreshing}
           onRefresh={() => fetchDevices(true)}
           contentContainerStyle={styles.listContainer}
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <Icon name="car-off" size={48} color="#cbd5e1" />
+              <Text style={styles.emptyText}>No vehicles match the selected criteria</Text>
+            </View>
+          }
         />
       )}
     </View>
   );
 };
 
-// ─── STYLES ───────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#F5F5F5',
-  },
+  container: { flex: 1, backgroundColor: '#f8fafc' },
   tabContainer: {
     flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
+    borderBottomColor: '#e2e8f0',
+    elevation: 2,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
   },
-  tab: {
-    flex: 1,
-    paddingVertical: 12,
-    alignItems: 'center',
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  activeTab: {
-    borderBottomColor: '#FF9800', // Protrack orange indicator
-  },
-  tabText: {
-    fontSize: 14,
-    color: '#757575',
-  },
-  activeTabText: {
-    color: '#FF9800',
-    fontWeight: 'bold',
-  },
-  searchContainer: {
+  tab: { flex: 1, paddingVertical: 14, alignItems: 'center', borderBottomWidth: 2.5, borderBottomColor: 'transparent' },
+  activeTab: { borderBottomColor: '#1565C0' },
+  tabText: { fontSize: 13, fontWeight: '600', color: '#64748b' },
+  activeTabText: { color: '#1565C0', fontWeight: '700' },
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    height: 48,
     borderBottomWidth: 1,
-    borderBottomColor: '#EEEEEE',
+    borderBottomColor: '#e2e8f0',
   },
-  searchIcon: {
-    marginRight: 8,
-  },
-  searchInput: {
-    flex: 1,
-    height: 40,
-    color: '#212121',
-    fontSize: 15,
-    padding: 0,
-  },
-  listContainer: {
-    paddingBottom: 24,
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  errorText: {
-    color: '#F44336',
-    fontSize: 15,
-    marginTop: 12,
-    textAlign: 'center',
-  },
-  retryBtn: {
-    marginTop: 16,
-    backgroundColor: '#FF9800',
-    paddingHorizontal: 24,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  retryBtnText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-  },
+  searchInput: { flex: 1, height: '100%', color: '#0f172a', fontSize: 14, fontWeight: '500' },
+  listContainer: { paddingVertical: 12, paddingBottom: 32 },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  loadingText: { marginTop: 12, color: '#1565C0', fontWeight: '700', fontSize: 13 },
+  errorText: { color: '#ef4444', fontSize: 14, marginTop: 12, textAlign: 'center', fontWeight: '600' },
+  retryBtn: { marginTop: 16, backgroundColor: '#1565C0', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 },
+  retryBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
+  empty: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 80 },
+  emptyText: { color: '#64748b', fontSize: 14, marginTop: 12, textAlign: 'center', fontWeight: '500' },
 });
 
 export default DevicesScreen;

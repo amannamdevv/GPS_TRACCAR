@@ -2,7 +2,7 @@ import React, { useContext } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import AuthNavigator from './AuthNavigator';
-import DrawerNavigator from './DrawerNavigator';
+import MainTabNavigator from './MainTabNavigator';
 import { AuthContext } from '../context/AuthContext';
 
 const AppNavigator = () => {
@@ -18,7 +18,7 @@ const AppNavigator = () => {
 
   return (
     <NavigationContainer>
-      {userToken !== null ? <DrawerNavigator /> : <AuthNavigator />}
+      {userToken !== null ? <MainTabNavigator /> : <AuthNavigator />}
     </NavigationContainer>
   );
 };
@@ -33,3 +33,4 @@ const styles = StyleSheet.create({
 });
 
 export default AppNavigator;
+

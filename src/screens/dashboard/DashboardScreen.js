@@ -493,7 +493,7 @@ const DashboardScreen = ({ navigation }) => {
           renderItem={({ item }) => (
             <DeviceCard
               device={item}
-              onPress={() => navigation.navigate('Devices', { screen: 'DeviceDetail', params: { device: item } })}
+              onPress={() => navigation.navigate('DeviceTab', { screen: 'DeviceDetail', params: { device: item } })}
             />
           )}
           refreshControl={

@@ -431,7 +431,7 @@ const ReportsScreen = ({ navigation }) => {
                 style={[styles.typeBtn, reportType === t && styles.typeBtnActive]}
                 onPress={() => {
                   if (t === 'DG Logs') {
-                    navigation.navigate('Devices', {
+                    navigation.navigate('DeviceTab', {
                       screen: 'DgStatusLog'
                     });
                   } else {

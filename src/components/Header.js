@@ -10,13 +10,11 @@ const Header = ({ title, navigation, showBack = false, rightAction }) => {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.leftContainer}>
         {showBack ? (
-          <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
+          <TouchableOpacity style={styles.iconButton} onPress={() => navigation && navigation.goBack && navigation.goBack()}>
             <Icon name="arrow-back-ios" size={20} color="#FFFFFF" />
           </TouchableOpacity>
         ) : (
-          <TouchableOpacity style={styles.iconButton} onPress={() => navigation.openDrawer()}>
-            <Icon name="menu" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
+          <View style={styles.iconButton} />
         )}
       </View>
 

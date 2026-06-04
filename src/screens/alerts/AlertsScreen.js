@@ -1,9 +1,9 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, StatusBar } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import moment from 'moment';
 import Header from '../../components/Header';
-import { fetchAlarms } from '../../api/webApi';
+import { fetchAlarms, fetchCustomEvents, fetchDeviceList } from '../../api/webApi';
 import AlertNotificationService from '../../services/AlertNotificationService';
 
 const ALERT_MAPPING = {
@@ -12,18 +12,28 @@ const ALERT_MAPPING = {
   vibration: 'Vibration Detected',
   ignitionOn: 'DG ON',
   ignitionOff: 'DG OFF',
-  motionStart: 'Motion Started',
-  motionStop: 'Motion Stopped',
+  deviceMoving: 'DG Moving',
+  deviceStopped: 'DG Stopped',
 };
 
-const getAlertIcon = (type) => {
+const getAlertConfig = (type) => {
   const t = type.toLowerCase();
-  if (t.includes('dg') || t.includes('ignition')) return 'key-variant';
-  if (t.includes('power')) return 'power-plug-off';
-  if (t.includes('battery')) return 'battery-alert';
-  if (t.includes('vibration')) return 'vibrate';
-  if (t.includes('motion')) return 'run';
-  return 'bell-ring';
+  if (t.includes('dg') || t.includes('ignition')) {
+    return { icon: 'key-variant', color: '#ea580c', bg: 'rgba(234, 88, 12, 0.15)' };
+  }
+  if (t.includes('power')) {
+    return { icon: 'power-plug-off', color: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' };
+  }
+  if (t.includes('battery')) {
+    return { icon: 'battery-alert', color: '#eab308', bg: 'rgba(234, 179, 8, 0.15)' };
+  }
+  if (t.includes('vibration')) {
+    return { icon: 'vibrate', color: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' };
+  }
+  if (t.includes('motion')) {
+    return { icon: 'run', color: '#10b981', bg: 'rgba(16, 185, 129, 0.15)' };
+  }
+  return { icon: 'bell-ring', color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)' };
 };
 
 const AlertsScreen = ({ navigation }) => {
@@ -34,20 +44,67 @@ const AlertsScreen = ({ navigation }) => {
   const loadData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const data = await fetchAlarms();
-      let alertsList = Array.isArray(data) ? data : (data?.data || []);
-      
-      // Only keep today's alerts
+      const [alarmsRaw, customRaw, devicesData] = await Promise.all([
+        fetchAlarms(),
+        fetchCustomEvents(),
+        fetchDeviceList(),
+      ]);
+
+      // Build a Set of device IDs that belong to the logged-in user
+      const myDevices = Array.isArray(devicesData)
+        ? devicesData
+        : (devicesData?.devices || []);
+      const myDeviceIds = new Set(
+        myDevices.map(d => String(d.id ?? d.deviceid ?? '')).filter(Boolean)
+      );
+
+      let alarmsList = Array.isArray(alarmsRaw) ? alarmsRaw : (alarmsRaw?.data || []);
+      let customList = Array.isArray(customRaw) ? customRaw : (customRaw?.data || []);
+
+      // Filter alarms to only those belonging to user's devices
+      alarmsList = alarmsList.filter(a =>
+        myDeviceIds.has(String(a.deviceId ?? a.deviceid ?? ''))
+      );
+
+      // Normalize custom events
+      const normalizedCustom = customList.map(e => {
+        const lower = String(e.event_type || '').toLowerCase();
+        let type = e.event_type;
+        if (lower === 'ignitionon' || lower === 'ignition_on') type = 'ignitionOn';
+        else if (lower === 'ignitionoff' || lower === 'ignition_off') type = 'ignitionOff';
+        else if (lower === 'devicemoving' || lower.includes('moving')) type = 'deviceMoving';
+        else if (lower === 'devicestopped' || lower.includes('stopped')) type = 'deviceStopped';
+
+        return {
+          id: e.event_id || Math.random().toString(),
+          type: type,
+          eventtime: e.event_time,
+          deviceId: e.deviceid,
+          address: e.address,
+          latitude: parseFloat(e.latitude || e.lat) || 0,
+          longitude: parseFloat(e.longitude || e.lon) || 0,
+        };
+      // Filter custom events to only those belonging to user's devices
+      }).filter(e => myDeviceIds.has(String(e.deviceId ?? '')));
+
+      let combined = [...alarmsList, ...normalizedCustom];
+
+      // Filter today's alerts
       const todayStart = moment().startOf('day');
       const todayEnd = moment().endOf('day');
-      alertsList = alertsList.filter(a => {
+      combined = combined.filter(a => {
         const t = moment(a.eventtime || a.serverTime || a.created_at);
         return t.isValid() && t.isBetween(todayStart, todayEnd, null, '[]');
       });
 
-      // Sort newest first
-      alertsList = [...alertsList].sort((a, b) => parseInt(b.id, 10) - parseInt(a.id, 10));
-      setAlerts(alertsList);
+      // Sort newest first by time
+      combined.sort((a, b) => {
+        const timeA = moment(a.eventtime || a.serverTime || a.created_at).valueOf();
+        const timeB = moment(b.eventtime || b.serverTime || b.created_at).valueOf();
+        return timeB - timeA;
+      });
+
+      setAlerts(combined);
     } catch (error) {
       console.warn('Failed to load alerts', error);
     } finally {
@@ -58,42 +115,52 @@ const AlertsScreen = ({ navigation }) => {
 
   useEffect(() => {
     loadData();
-    // Auto refresh every 2 minutes while on this screen
-    const interval = setInterval(() => {
-      loadData(false);
-    }, 120000);
-    return () => clearInterval(interval);
+    // Auto refresh removed to reduce server load
+    // const interval = setInterval(() => {
+    //   loadData(false);
+    // }, 60000); // refresh every minute
+    // return () => clearInterval(interval);
   }, [loadData]);
 
   const renderItem = ({ item }) => {
     const rawType = item.type || '';
     const cleanType = rawType.split(',')[0].trim();
     const displayName = ALERT_MAPPING[cleanType] || cleanType;
-    const iconName = getAlertIcon(cleanType);
-    const timeFormatted = moment(item.eventtime || item.serverTime).format('MMM DD, YYYY hh:mm A');
+    const config = getAlertConfig(cleanType);
+    const timeFormatted = moment(item.eventtime || item.serverTime).format('hh:mm A');
+    const dateFormatted = moment(item.eventtime || item.serverTime).format('MMM DD, YYYY');
     const deviceName = AlertNotificationService._getDeviceName(item.deviceid || item.deviceId);
 
     return (
-      <View style={styles.card}>
-        <View style={styles.iconContainer}>
-          <Icon name={iconName} size={28} color="#ef4444" />
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={0.8}
+        onPress={() => navigation.navigate('AlertDetails', { alert: item })}
+      >
+        <View style={[styles.iconContainer, { backgroundColor: config.bg }]}>
+          <Icon name={config.icon} size={24} color={config.color} />
         </View>
         <View style={styles.contentContainer}>
           <Text style={styles.alertName}>{displayName}</Text>
           <Text style={styles.deviceText}>{deviceName}</Text>
-          <Text style={styles.timeText}>{timeFormatted}</Text>
+          <View style={styles.timeBadge}>
+            <Icon name="clock-outline" size={12} color="#94a3b8" style={{ marginRight: 4 }} />
+            <Text style={styles.timeText}>{dateFormatted} at {timeFormatted}</Text>
+          </View>
         </View>
-      </View>
+        <Icon name="chevron-right" size={20} color="#64748b" style={{ alignSelf: 'center' }} />
+      </TouchableOpacity>
     );
   };
 
   return (
     <View style={styles.container}>
-      <Header title="Current Alerts" navigation={navigation} />
+      <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
+      <Header title="Security Alerts" navigation={navigation} />
       
       {loading && !refreshing ? (
         <View style={styles.center}>
-          <ActivityIndicator size="large" color="#1565C0" />
+          <ActivityIndicator size="large" color="#38bdf8" />
         </View>
       ) : (
         <FlatList
@@ -102,12 +169,17 @@ const AlertsScreen = ({ navigation }) => {
           renderItem={renderItem}
           contentContainerStyle={styles.listContent}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => loadData(true)} colors={['#1565C0']} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => loadData(true)}
+              colors={['#38bdf8']}
+              tintColor="#38bdf8"
+            />
           }
           ListEmptyComponent={
             <View style={styles.center}>
-              <Icon name="bell-off-outline" size={48} color="#cbd5e1" />
-              <Text style={styles.emptyText}>No alerts found</Text>
+              <Icon name="bell-outline" size={54} color="#475569" />
+              <Text style={styles.emptyText}>No alerts triggered today</Text>
             </View>
           }
         />
@@ -119,7 +191,7 @@ const AlertsScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#0f172a', // Premium dark background
   },
   center: {
     flex: 1,
@@ -133,48 +205,51 @@ const styles = StyleSheet.create({
   },
   card: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
+    backgroundColor: '#1e293b', // Lighter dark card background
+    borderRadius: 16,
+    padding: 14,
     marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   iconContainer: {
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 16,
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#fee2e2',
+    marginRight: 14,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
   },
   contentContainer: {
     flex: 1,
     justifyContent: 'center',
   },
   alertName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#0f172a',
-    marginBottom: 4,
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#f8fafc',
+    marginBottom: 3,
   },
   deviceText: {
     fontSize: 13,
-    color: '#475569',
-    marginBottom: 2,
+    color: '#94a3b8',
+    fontWeight: '500',
+    marginBottom: 6,
+  },
+  timeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   timeText: {
-    fontSize: 12,
-    color: '#94a3b8',
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '600',
   },
   emptyText: {
-    marginTop: 12,
-    fontSize: 16,
+    marginTop: 14,
+    fontSize: 15,
     color: '#64748b',
+    fontWeight: '600',
   },
 });
 
