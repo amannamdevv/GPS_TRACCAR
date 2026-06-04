@@ -490,29 +490,35 @@ class AlertNotificationService {
   async start() {
     if (this.isPolling) return;
     this.isPolling = true;
-    await this._init();
-
-    const options = {
-      taskName: 'GPSAlerts',
-      taskTitle: 'GPS Tracking Active',
-      taskDesc: 'Monitoring real-time vehicle alerts',
-      taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-      color: '#1565C0',
-      linkingURI: 'traccarmanager://',
-      parameters: {},
-    };
 
     try {
-      await this._loadDevices();
-      await BackgroundActions.start(this.backgroundTask, options);
-      console.log('[AlertService] Background task started ✅');
+      await this._init();
+
+      const options = {
+        taskName: 'GPSAlerts',
+        taskTitle: 'GPS Tracking Active',
+        taskDesc: 'Monitoring real-time vehicle alerts',
+        taskIcon: { name: 'ic_launcher', type: 'mipmap' },
+        color: '#1565C0',
+        linkingURI: 'traccarmanager://',
+        parameters: {},
+      };
+
+      try {
+        await this._loadDevices();
+        await BackgroundActions.start(this.backgroundTask, options);
+        console.log('[AlertService] Background task started ✅');
+      } catch (e) {
+        console.warn('[AlertService] Background task failed — using foreground fallback:', e.message);
+        await this._loadDevices();
+        this._fallbackInterval = setInterval(async () => {
+          await this._pollCustomEvents();
+          await this._pollAlarms();
+        }, POLLING_INTERVAL_MS);
+      }
     } catch (e) {
-      console.warn('[AlertService] Background task failed — using foreground fallback:', e.message);
-      await this._loadDevices();
-      this._fallbackInterval = setInterval(async () => {
-        await this._pollCustomEvents();
-        await this._pollAlarms();
-      }, POLLING_INTERVAL_MS);
+      console.error('[AlertService] Critical error during start:', e);
+      this.isPolling = false;
     }
   }
 

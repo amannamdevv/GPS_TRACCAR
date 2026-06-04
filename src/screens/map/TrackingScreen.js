@@ -93,7 +93,6 @@ const TrackingScreen = ({ route, navigation }) => {
                             'Engine:' + data.engine + '\\n' +
                             'Battery:' + data.battery + '\\n' +
                             (data.alarm ? 'Alarm: ' + data.alarm + '\\n' : '') +
-                            'External Voltage:' + data.voltage + '\\n' +
                             'Distance:' + data.distance;
 
             if (marker) {

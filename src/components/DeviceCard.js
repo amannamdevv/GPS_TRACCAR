@@ -129,7 +129,7 @@ const DeviceCard = ({ device, onPress }) => {
           <View style={styles.telItem}>
             <Icon name={isCharging ? "battery-charging" : "battery-std"} size={16} color="#0284c7" />
             <Text style={styles.telLabel}>Batt:</Text>
-            <Text style={styles.telValue}>{device.battery_level ? `${device.battery_level}%` : 'N/A'}</Text>
+            <Text style={styles.telValue}>{device.battery_level != null ? `${device.battery_level}%` : '0%'}</Text>
           </View>
 
           <View style={styles.telItem}>

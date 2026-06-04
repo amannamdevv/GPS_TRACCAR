@@ -47,9 +47,9 @@ Last Update: ${formatDate(device.position_time)}
       { label: 'Engine Ignition', value: device.ignition_status === 1 || device.ignition_status === '1' || device.ignition_status === true ? 'ON' : 'OFF', icon: 'key' },
     ]},
     { category: 'Sensor & Power Attributes', rows: [
-      { label: 'Battery Level', value: device.battery_level ? `${device.battery_level}%` : 'N/A', icon: 'battery' },
+      { label: 'Battery Level', value: device.battery_level != null ? `${device.battery_level}%` : '0%', icon: 'battery' },
       { label: 'DG Status', value: device.dg_status === 1 || device.dg_status === '1' ? 'ON' : 'OFF', icon: 'lightning-bolt' },
-      { label: 'Charging State', value: device.battery_status === 'charging' || device.battery_status === true ? 'Charging' : 'Discharging', icon: 'power-plug' },
+      { label: 'Charging State', value: device.battery_status === 'charging' || device.battery_status === true ? 'Charging' : 'Not Charging', icon: 'power-plug' },
       { label: 'GSM Signal (RSSI)', value: device.rssi ? `${device.rssi} / 31` : 'N/A', icon: 'signal' },
     ]},
     { category: 'Location Telemetry', rows: [

@@ -375,21 +375,7 @@ const DashboardScreen = ({ navigation }) => {
         ))}
       </View>
 
-      {/* Secondary Cards — counts scoped to selected primary group */}
-      <View style={styles.secondaryRow}>
-        {secondaryCards.map(c => (
-          <TouchableOpacity
-            key={c.key}
-            style={[styles.secondaryCard, secondaryFilter === c.key && styles.secondaryCardActive]}
-            onPress={() => handleSecondaryFilter(c.key)}
-            activeOpacity={0.8}
-          >
-            <Icon name={c.icon} size={18} color={c.color} />
-            <Text style={styles.secondaryVal}>{c.val}</Text>
-            <Text style={styles.secondaryLabel}>{c.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+
 
       {/* Context hint */}
       {(primaryFilter === 'online' || primaryFilter === 'offline') && (
@@ -488,6 +474,7 @@ const DashboardScreen = ({ navigation }) => {
       ) : (
         <FlatList
           data={filteredDevices}
+          keyboardShouldPersistTaps="always"
           keyExtractor={item => (item.id?.toString() ?? Math.random().toString())}
           ListHeaderComponent={renderHeader}
           renderItem={({ item }) => (

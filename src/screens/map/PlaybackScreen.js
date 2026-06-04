@@ -80,16 +80,48 @@ const fetchAllPositions = async (deviceId, from, to) => {
 };
 
 // ── Normalize raw API row → playback point ───────────────────────────────────
-const normalizePoint = (p) => ({
-  latitude: parseFloat(p.start_latitude ?? p.motion_lat ?? p.latitude ?? p.lat ?? 0),
-  longitude: parseFloat(p.start_longitude ?? p.motion_lon ?? p.longitude ?? p.lon ?? 0),
-  speedKmh: parseFloat(p.speedKmh ?? p.speed ?? 0),
-  course: parseFloat(p.course ?? 0),
-  fixTime: p.start_time ?? p.position_time ?? p.fixTime ?? new Date().toISOString(),
-  ignition_status: p.ignition_status ?? p.ignition ?? null,
-  battery_level: p.battery_level ?? null,
-  final_status: p.final_status ?? null,
-});
+const normalizePoint = (p) => {
+  let speedFromAttr = 0;
+  try {
+    const parseAttr = (attr) => {
+      if (!attr) return {};
+      if (typeof attr === 'string') {
+        try { return JSON.parse(attr); } catch(e) { return {}; }
+      }
+      return attr;
+    };
+    
+    const startAttr = parseAttr(p.start_attributes);
+    const endAttr = parseAttr(p.end_attributes);
+    
+    const s1 = startAttr.speed ?? startAttr.speedKmh ?? startAttr.speed_kmh ?? startAttr.Speed ?? null;
+    const s2 = endAttr.speed ?? endAttr.speedKmh ?? endAttr.speed_kmh ?? endAttr.Speed ?? null;
+    
+    speedFromAttr = parseFloat(s1 ?? s2 ?? 0);
+  } catch (e) {}
+
+  let finalSpeed = parseFloat(p.speedKmh ?? p.speed ?? 0);
+  if (finalSpeed === 0 || isNaN(finalSpeed)) finalSpeed = speedFromAttr;
+  
+  if ((finalSpeed === 0 || isNaN(finalSpeed)) && p.covered_distance_km && p.total_duration_minutes) {
+    const dist = parseFloat(p.covered_distance_km);
+    const mins = parseFloat(p.total_duration_minutes);
+    if (mins > 0) {
+      finalSpeed = dist / (mins / 60);
+    }
+  }
+
+  return {
+    latitude: parseFloat(p.start_latitude ?? p.motion_lat ?? p.latitude ?? p.lat ?? 0),
+    longitude: parseFloat(p.start_longitude ?? p.motion_lon ?? p.longitude ?? p.lon ?? 0),
+    speedKmh: isNaN(finalSpeed) ? 0 : finalSpeed,
+    course: parseFloat(p.course ?? 0),
+    fixTime: p.start_time ?? p.position_time ?? p.fixTime ?? new Date().toISOString(),
+    ignition_status: p.ignition_status ?? p.ignition ?? null,
+    battery_level: p.battery_level ?? null,
+    final_status: p.final_status ?? null,
+  };
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 const PlaybackScreen = ({ route, navigation }) => {
@@ -134,10 +166,15 @@ const PlaybackScreen = ({ route, navigation }) => {
   const lastGeoIndexRef = useRef(-1);
   const lastBridgeSendRef = useRef(0);
   const lastTelUpdateRef = useRef(0);
+  const currentIndexRef = useRef(0);
+  const elapsedMsRef = useRef(0);
+  const progBarLayoutRef = useRef({ x: 0, width: BAR_WIDTH });
+  const lastSeekDragRef = useRef(0);
 
   useEffect(() => { routePointsRef.current = routePoints; }, [routePoints]);
   useEffect(() => { mileageArrRef.current = mileageArr; }, [mileageArr]);
   useEffect(() => { currentAddressRef.current = currentAddress; }, [currentAddress]);
+  useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
 
   const deviceId = device.deviceid ?? device.id;
   const BAR_WIDTH = width - 40;
@@ -211,6 +248,7 @@ const PlaybackScreen = ({ route, navigation }) => {
     setShowHUD(false);
     setIsPlaying(false);
     setCurrentIndex(0);
+    elapsedMsRef.current = 0;
     setRoutePoints([]);
     setMileageArr([]);
     setCurrentAddress('');
@@ -235,19 +273,29 @@ const PlaybackScreen = ({ route, navigation }) => {
         .map(normalizePoint)
         .filter(p => p.latitude !== 0 && p.longitude !== 0);
 
+      // Only keep MOVE points — remove STOP, OFF, IDLE
+      points = points.filter(p => {
+        const st = String(p.final_status || '').toUpperCase();
+        if (st === 'MOVE' || st === 'MOVING') return true;
+        if (!st || st === '—' || st === 'NULL') return p.speedKmh > 2; // fallback: speed-based
+        return false;
+      });
+
       // Sort ascending by time
       points.sort((a, b) => moment(a.fixTime).valueOf() - moment(b.fixTime).valueOf());
 
       // Deduplicate consecutive identical coords
-      const deduped = [points[0]];
-      for (let i = 1; i < points.length; i++) {
-        const prev = deduped[deduped.length - 1];
-        if (
-          Math.abs(points[i].latitude - prev.latitude) > 0.00001 ||
-          Math.abs(points[i].longitude - prev.longitude) > 0.00001
-        ) deduped.push(points[i]);
+      if (points.length > 0) {
+        const deduped = [points[0]];
+        for (let i = 1; i < points.length; i++) {
+          const prev = deduped[deduped.length - 1];
+          if (
+            Math.abs(points[i].latitude - prev.latitude) > 0.00001 ||
+            Math.abs(points[i].longitude - prev.longitude) > 0.00001
+          ) deduped.push(points[i]);
+        }
+        points = deduped;
       }
-      points = deduped;
 
       if (points.length < 2) {
         setLoadError('Sirf ek GPS point mila — playback ke liye 2+ points chahiye.');
@@ -317,12 +365,14 @@ const PlaybackScreen = ({ route, navigation }) => {
     const startMs = moment(pts[0].fixTime).valueOf();
     const totalMs = moment(pts[pts.length - 1].fixTime).valueOf() - startMs;
     const pointTimes = pts.map(p => moment(p.fixTime).valueOf() - startMs);
-    const resumeMs = pointTimes[currentIndex] || 0;
+    // Use refs for precise resume — survives speed changes without restart
+    const resumeMs = elapsedMsRef.current || pointTimes[currentIndexRef.current] || 0;
     let animStart = performance.now() - resumeMs / playSpeed;
-    let lastIdx = currentIndex;
+    let lastIdx = currentIndexRef.current;
 
     const animate = (now) => {
       const elapsed = (now - animStart) * playSpeed;
+      elapsedMsRef.current = Math.min(elapsed, totalMs);
 
       if (elapsed >= totalMs) {
         const lp = pts[pts.length - 1];
@@ -419,6 +469,11 @@ const PlaybackScreen = ({ route, navigation }) => {
     const pt = pts[idx];
     if (!pt) return;
     setCurrentIndex(idx);
+    // Update elapsed ref for accurate speed-change resume
+    if (pts.length > 0) {
+      const s0 = moment(pts[0].fixTime).valueOf();
+      elapsedMsRef.current = moment(pt.fixTime).valueOf() - s0;
+    }
     const spd = parseFloat(pt.speedKmh);
     const curStatus = spd > 2 ? 'MOVE' : (pt.final_status || 'STOP');
     const tel = {
@@ -804,22 +859,38 @@ setTimeout(function(){
             <Text style={s.ptCount}>{currentIndex + 1}/{routePoints.length}</Text>
           </View>
 
-          {/* ── Progress bar ── */}
+          {/* ── Progress bar (tap + drag to seek) ── */}
           <View style={s.progWrap}>
-            <TouchableOpacity
+            <View
               style={s.progBg}
-              activeOpacity={1}
-              onPress={e => {
-                const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / BAR_WIDTH));
-                const idx = Math.round(ratio * (routePoints.length - 1));
+              onLayout={e => { progBarLayoutRef.current = e.nativeEvent.layout; }}
+              onStartShouldSetResponder={() => true}
+              onMoveShouldSetResponder={() => true}
+              onResponderGrant={e => {
                 setIsPlaying(false);
                 if (animationRef.current) cancelAnimationFrame(animationRef.current);
-                seekTo(idx);
+                const barW = progBarLayoutRef.current.width || BAR_WIDTH;
+                const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / barW));
+                const pts = routePointsRef.current;
+                if (pts.length < 2) return;
+                seekTo(Math.round(ratio * (pts.length - 1)));
+              }}
+              onResponderMove={e => {
+                const now = Date.now();
+                if (now - lastSeekDragRef.current < 50) return;
+                lastSeekDragRef.current = now;
+                const barW = progBarLayoutRef.current.width || BAR_WIDTH;
+                const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / barW));
+                const pts = routePointsRef.current;
+                if (pts.length < 2) return;
+                seekTo(Math.round(ratio * (pts.length - 1)));
               }}
             >
-              <View style={[s.progFill, { width: `${progress}%` }]} />
+              <View style={s.progTrackBg}>
+                <View style={[s.progFill, { width: `${progress}%` }]} />
+              </View>
               <View style={[s.progThumb, { left: `${Math.max(0, Math.min(98, progress))}%` }]} />
-            </TouchableOpacity>
+            </View>
             <View style={s.timeRow}>
               <Text style={s.timeTxt}>
                 {routePoints[0]?.fixTime ? moment(routePoints[0].fixTime).format('HH:mm') : '--:--'}
@@ -1020,13 +1091,18 @@ const s = StyleSheet.create({
   // Progress bar
   progWrap: { marginBottom: 8 },
   progBg: {
-    height: 8, backgroundColor: '#0d1117', borderRadius: 4,
+    height: 28, backgroundColor: 'transparent', borderRadius: 4,
     overflow: 'visible', position: 'relative',
+    justifyContent: 'center',
+  },
+  progTrackBg: {
+    height: 8, backgroundColor: '#0d1117', borderRadius: 4,
+    overflow: 'hidden',
     borderWidth: 1, borderColor: '#1e2533',
   },
   progFill: { height: '100%', backgroundColor: '#f97316', borderRadius: 4 },
   progThumb: {
-    position: 'absolute', top: -5,
+    position: 'absolute', top: 5,
     width: 18, height: 18, borderRadius: 9,
     backgroundColor: '#fff', borderWidth: 2.5, borderColor: '#f97316',
     marginLeft: -9,

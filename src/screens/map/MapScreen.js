@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   StyleSheet,
@@ -122,7 +123,13 @@ const MapScreen = ({ navigation, route }) => {
     <body>
       <div id="map"></div>
       <script>
-        var map = L.map('map', { zoomControl: false }).setView([20, 78], 5);
+        var indiaBounds = [[6.4626999, 68.1097], [35.513327, 97.3953586]];
+        var map = L.map('map', { 
+          zoomControl: false,
+          maxBounds: indiaBounds,
+          maxBoundsViscosity: 1.0,
+          minZoom: 4
+        }).setView([20.5937, 78.9629], 5);
         
         var layers = {
           standard: L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'),
@@ -138,7 +145,7 @@ const MapScreen = ({ navigation, route }) => {
         function getStatusColor(pos) {
           var isMoving = pos.motion_status === 'moving' || pos.motion_status === 'true' || pos.motion_status === true || pos.motion_status === 1 || pos.motion_status === '1';
           if (isMoving) return '#10b981'; // Green
-          if (pos.status === 'online') return '#0284c7'; // Blue
+          if (pos.status === 'online') return '#10b981'; // Green
           return '#ef4444'; // Red
         }
 
@@ -214,11 +221,26 @@ const MapScreen = ({ navigation, route }) => {
 
             if (data.type === 'LOCATE_ME_NATIVE') {
               var latlng = [data.lat, data.lng];
-              if (!data.noPan) map.setView(latlng, 16);
               if(myLocMarker) map.removeLayer(myLocMarker);
               myLocMarker = L.circleMarker(latlng, {
                 radius: 8, fillColor: '#2196F3', color: '#fff', weight: 2, opacity: 1, fillOpacity: 0.9
               }).addTo(map);
+              
+              if (!data.noPan) {
+                if (data.fitAll) {
+                  var allBounds = [latlng];
+                  for (var id in markers) {
+                    allBounds.push(markers[id].getLatLng());
+                  }
+                  if (allBounds.length > 1) {
+                    map.fitBounds(allBounds, { padding: [50, 50], maxZoom: 16 });
+                  } else {
+                    map.setView(latlng, 16);
+                  }
+                } else {
+                  map.setView(latlng, 16);
+                }
+              }
             }
           } catch(e) {
             window.ReactNativeWebView.postMessage(JSON.stringify({type: 'ERROR', msg: e.message}));
@@ -335,10 +357,16 @@ const focusNearestDevice = (positionsArray) => {
   useEffect(() => {
     notifee.requestPermission();
     const unsubNet = NetInfo.addEventListener(state => setIsOnline(state.isConnected));
-    fetchData();
-    // const interval = setInterval(fetchData, REFRESH_INTERVAL);
     return () => { unsubNet(); };
-  }, [fetchData]);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+      const interval = setInterval(fetchData, 10000); // Poll every 10s while focused
+      return () => clearInterval(interval);
+    }, [fetchData])
+  );
 
   // Handle params focus
   useEffect(() => {
@@ -410,7 +438,7 @@ const focusNearestDevice = (positionsArray) => {
         sendToMap('LOCATE_ME_NATIVE', {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-          // noPan not set → map will pan to user location
+          fitAll: true
         });
       },
       () => {},
