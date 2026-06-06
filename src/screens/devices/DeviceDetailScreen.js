@@ -9,7 +9,9 @@ import {
   Alert,
   FlatList,
   StatusBar,
+  Modal,
 } from 'react-native';
+import DatePicker from 'react-native-date-picker';
 import { WebView } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Header from '../../components/Header';
@@ -76,6 +78,23 @@ const DeviceDetailScreen = ({ route, navigation }) => {
   const [dgLogs, setDgLogs] = useState([]);
   const [dgLoading, setDgLoading] = useState(false);
   const [dgTotalCount, setDgTotalCount] = useState(0);
+
+  // ── DG Report Filters ──
+  const [dgStatusFilter, setDgStatusFilter] = useState('ALL'); // ALL, OFF, ON, MOVE, STOPPED
+  const [dgDateFrom, setDgDateFrom] = useState(() => {
+    const d = new Date(); d.setHours(0,0,0,0); return d;
+  });
+  const [dgDateTo, setDgDateTo] = useState(new Date());
+  const [showDgFromPicker, setShowDgFromPicker] = useState(false);
+  const [showDgToPicker, setShowDgToPicker] = useState(false);
+
+  // ── Trip Filters ──
+  const [tripDateFrom, setTripDateFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(0,0,0,0); return d;
+  });
+  const [tripDateTo, setTripDateTo] = useState(new Date());
+  const [showTripFromPicker, setShowTripFromPicker] = useState(false);
+  const [showTripToPicker, setShowTripToPicker] = useState(false);
 
   const [expandedCardIds, setExpandedCardIds] = useState({});
   const toggleExpand = (id) => {
@@ -169,10 +188,19 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     if (tripsLoading) return;
     setTripsLoading(true);
     try {
-      const start = moment().subtract(24, 'hours').toISOString();
-      const end = moment().toISOString();
+      const start = moment(tripDateFrom).format('YYYY-MM-DD HH:mm:ss');
+      const end   = moment(tripDateTo).format('YYYY-MM-DD HH:mm:ss');
       const data = await getTripsReport(device.id, start, end);
-      const enriched = await Promise.all((data || []).map(async trip => {
+
+      // Client-side date filter
+      const fromMs = moment(tripDateFrom).valueOf();
+      const toMs   = moment(tripDateTo).valueOf();
+      const timeFiltered = (data || []).filter(trip => {
+        const t = moment(trip.startTime).valueOf();
+        return t >= fromMs && t <= toMs;
+      });
+
+      const enriched = await Promise.all(timeFiltered.map(async trip => {
         if (!trip.startAddress && trip.startLat) {
           trip.startAddress = await reverseGeocode(trip.startLat, trip.startLon);
         }
@@ -187,16 +215,20 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     } finally {
       setTripsLoading(false);
     }
-  }, [device.id, tripsLoading]);
+  }, [device.id, tripsLoading, tripDateFrom, tripDateTo]);
 
   // ─── LOAD DG LOGS ───────────────────────────────────────────────────────────
   const loadDgLogs = useCallback(async () => {
     if (dgLoading) return;
     setDgLoading(true);
     try {
+      const from = moment(dgDateFrom).format('YYYY-MM-DD HH:mm:ss');
+      const to   = moment(dgDateTo).format('YYYY-MM-DD HH:mm:ss');
       const rows = await fetchDgStatusLogs({
         device_id: device.id,
         dg_name: device.name,
+        from,
+        to,
         page: 1,
         limit: 99999,
       });
@@ -204,12 +236,20 @@ const DeviceDetailScreen = ({ route, navigation }) => {
       const targetId = String(device.id);
       const targetName = String(device.name || '').trim().toLowerCase();
 
+      // Client-side date filter
+      const fromMs = moment(dgDateFrom).valueOf();
+      const toMs   = moment(dgDateTo).valueOf();
+
       const filtered = (rows || []).filter(item => {
         const itemId = String(item.deviceid || item.device_id || '');
         if (itemId && itemId !== targetId) return false;
 
         const itemName = String(item.dg_name || item.device_name || '').trim().toLowerCase();
         if (itemName && targetName && itemName !== targetName && !itemId) return false;
+
+        // Time filter
+        const t = moment(item.start_time || item.position_time).valueOf();
+        if (t < fromMs || t > toMs) return false;
 
         return true;
       });
@@ -221,7 +261,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     } finally {
       setDgLoading(false);
     }
-  }, [device.id, dgLoading]);
+  }, [device.id, dgLoading, dgDateFrom, dgDateTo]);
 
   // Trigger data load based on segment selection
   useEffect(() => {
@@ -509,10 +549,8 @@ const DeviceDetailScreen = ({ route, navigation }) => {
 
           {activeSegment === 'SENSORS' && (
             <View style={styles.card}>
-              <InfoRow label="GSM Signal Strength" value={rssi ? `${rssi} / 31` : 'N/A'} />
+              <InfoRow label="Network Strength" value={rssi ? `${rssi}` : 'N/A'} />
               <InfoRow label="Battery Voltage" value={power != null ? `${power} V` : 'N/A'} />
-              <InfoRow label="Engine Hours" value={hoursStr} />
-              <InfoRow label="Total Distance" value={totalDistKm} />
               <InfoRow label="Speed" value={`${device.speedKmh || 0} km/h`} />
               <InfoRow label="Motion State" value={motion === true || (device.speedKmh || 0) > 2 ? 'Moving' : 'Stopped'} />
             </View>
@@ -520,12 +558,35 @@ const DeviceDetailScreen = ({ route, navigation }) => {
 
           {activeSegment === 'TRIPS' && (
             <View style={{ marginTop: 6 }}>
+              {/* ── Trip Date Range Filter ── */}
+              <View style={styles.filterBar}>
+                <TouchableOpacity style={styles.dateChip} onPress={() => setShowTripFromPicker(true)}>
+                  <Icon name="calendar-start" size={14} color="#f97316" />
+                  <Text style={styles.dateChipText}>{moment(tripDateFrom).format('DD MMM, HH:mm')}</Text>
+                </TouchableOpacity>
+                <Text style={styles.dateChipArrow}>→</Text>
+                <TouchableOpacity style={styles.dateChip} onPress={() => setShowTripToPicker(true)}>
+                  <Icon name="calendar-end" size={14} color="#f97316" />
+                  <Text style={styles.dateChipText}>{moment(tripDateTo).format('DD MMM, HH:mm')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.applyBtn} onPress={loadTrips} disabled={tripsLoading}>
+                  <Icon name="magnify" size={16} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
+              <DatePicker modal open={showTripFromPicker} date={tripDateFrom} mode="datetime"
+                onConfirm={d => { setShowTripFromPicker(false); setTripDateFrom(d); }}
+                onCancel={() => setShowTripFromPicker(false)} title="Trip Start Date" />
+              <DatePicker modal open={showTripToPicker} date={tripDateTo} mode="datetime"
+                onConfirm={d => { setShowTripToPicker(false); setTripDateTo(d); }}
+                onCancel={() => setShowTripToPicker(false)} title="Trip End Date" />
+
               {tripsLoading ? (
                 <ActivityIndicator size="large" color="#1565C0" style={{ marginVertical: 30 }} />
               ) : trips.length === 0 ? (
                 <View style={styles.emptyContent}>
                   <Icon name="routes" size={40} color="#cbd5e1" />
-                  <Text style={styles.emptyContentText}>No trips recorded in the last 24 hours</Text>
+                  <Text style={styles.emptyContentText}>No trips found for the selected date range</Text>
                 </View>
               ) : (
                 trips.map((trip, idx) => (
@@ -555,16 +616,65 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                 </TouchableOpacity>
               </View>
 
+              {/* ── DG Status Filter Chips ── */}
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                {['ALL', 'OFF', 'ON', 'MOVE', 'STOPPED'].map(st => (
+                  <TouchableOpacity
+                    key={st}
+                    style={[
+                      styles.statusChip,
+                      dgStatusFilter === st && styles.statusChipActive,
+                    ]}
+                    onPress={() => setDgStatusFilter(st)}
+                  >
+                    <Text style={[
+                      styles.statusChipText,
+                      dgStatusFilter === st && styles.statusChipTextActive,
+                    ]}>{st}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              {/* ── DG Date Range Filter ── */}
+              <View style={styles.filterBar}>
+                <TouchableOpacity style={styles.dateChip} onPress={() => setShowDgFromPicker(true)}>
+                  <Icon name="calendar-start" size={14} color="#f97316" />
+                  <Text style={styles.dateChipText}>{moment(dgDateFrom).format('DD MMM, HH:mm')}</Text>
+                </TouchableOpacity>
+                <Text style={styles.dateChipArrow}>→</Text>
+                <TouchableOpacity style={styles.dateChip} onPress={() => setShowDgToPicker(true)}>
+                  <Icon name="calendar-end" size={14} color="#f97316" />
+                  <Text style={styles.dateChipText}>{moment(dgDateTo).format('DD MMM, HH:mm')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.applyBtn} onPress={loadDgLogs} disabled={dgLoading}>
+                  <Icon name="magnify" size={16} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
+              <DatePicker modal open={showDgFromPicker} date={dgDateFrom} mode="datetime"
+                onConfirm={d => { setShowDgFromPicker(false); setDgDateFrom(d); }}
+                onCancel={() => setShowDgFromPicker(false)} title="DG Report Start Date" />
+              <DatePicker modal open={showDgToPicker} date={dgDateTo} mode="datetime"
+                onConfirm={d => { setShowDgToPicker(false); setDgDateTo(d); }}
+                onCancel={() => setShowDgToPicker(false)} title="DG Report End Date" />
+
               {dgLoading ? (
                 <ActivityIndicator size="large" color="#1565C0" style={{ marginVertical: 30 }} />
               ) : dgLogs.length === 0 ? (
                 <View style={styles.emptyContent}>
                   <Icon name="engine-off" size={40} color="#cbd5e1" />
-                  <Text style={styles.emptyContentText}>No DG activities recorded</Text>
+                  <Text style={styles.emptyContentText}>No DG activities found for the selected filters</Text>
                 </View>
               ) : (
                 <FlatList
-                  data={dgLogs}
+                  data={dgStatusFilter === 'ALL' ? dgLogs : dgLogs.filter(item => {
+                    const raw = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
+                    if (dgStatusFilter === 'OFF') return raw.includes('OFF') || raw === '0';
+                    if (dgStatusFilter === 'ON') return raw.includes('ON') && !raw.includes('MOTION') || raw === '1';
+                    if (dgStatusFilter === 'MOVE') return raw.includes('MOVE') || raw.includes('MOVING') || raw.includes('MOTION') || raw.includes('TRANSIT');
+                    if (dgStatusFilter === 'STOPPED') return raw.includes('STOP') || raw.includes('IDLE') || raw.includes('PARK');
+                    return true;
+                  })}
                   keyExtractor={(item, index) => `${item.id || index}`}
                   renderItem={renderDgLogCard}
                   scrollEnabled={false}
@@ -689,6 +799,64 @@ const styles = StyleSheet.create({
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   detailLabel: { fontSize: 11, fontWeight: '600', color: '#64748b', flex: 1.1 },
   detailValue: { fontSize: 11, fontWeight: '600', color: '#1e293b', flex: 2, textAlign: 'right' },
+  // ── Filter bar styles ──
+  filterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 6,
+  },
+  dateChip: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#fff7ed',
+    borderWidth: 1,
+    borderColor: '#fed7aa',
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+  },
+  dateChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  dateChipArrow: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#f97316',
+  },
+  applyBtn: {
+    backgroundColor: '#f97316',
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statusChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#f1f5f9',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  statusChipActive: {
+    backgroundColor: '#f97316',
+    borderColor: '#f97316',
+  },
+  statusChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#64748b',
+  },
+  statusChipTextActive: {
+    color: '#fff',
+  },
 });
 
 export default DeviceDetailScreen;

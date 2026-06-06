@@ -59,6 +59,7 @@ const MapScreen = ({ navigation, route }) => {
   const prevPositionsRef = useRef({});
   const seenAlarmsRef = useRef(new Set());
   const isFirstAlarmsFetchRef = useRef(true);
+  const initialFocusDoneRef = useRef(false);
   const isFetchingRef = useRef(false);
   const lastAlarmsFetchRef = useRef(0);
 
@@ -143,8 +144,6 @@ const MapScreen = ({ navigation, route }) => {
         var myLocMarker = null;
 
         function getStatusColor(pos) {
-          var isMoving = pos.motion_status === 'moving' || pos.motion_status === 'true' || pos.motion_status === true || pos.motion_status === 1 || pos.motion_status === '1';
-          if (isMoving) return '#10b981'; // Green
           if (pos.status === 'online') return '#10b981'; // Green
           return '#ef4444'; // Red
         }
@@ -163,7 +162,7 @@ const MapScreen = ({ navigation, route }) => {
         function buildPopup(pos) {
           var speedKmh = pos.speedKmh || 0;
           var ignition = pos.ignition_status ? 'On' : 'Off';
-          var battery = pos.battery_level != null ? pos.battery_level + '%' : 'N/A';
+          var battery = pos.battery_level != null ? pos.battery_level + '%' : '0%';
           var alarm = pos.alarm ? pos.alarm : '—';
           var address = pos.address || 'Unknown';
           return '<div class="popup-header">' + pos.name + '</div>' +
@@ -299,12 +298,16 @@ const MapScreen = ({ navigation, route }) => {
         prevPositionsRef.current = posMap;
         setPositions(posMap);
 
-        // If map is ready, send initial markers and focus nearest device
+        // If map is ready, send markers update
         if (mapReady) {
           sendToMap('UPDATE_MARKERS', { positions: Object.values(posMap) });
-          focusNearestDevice(Object.values(posMap));
-          // Auto-show user's current location blue dot
-          showMyLocation();
+          // Only auto-focus and show location on first load — don't reset user's view on every refresh
+          if (!initialFocusDoneRef.current) {
+            initialFocusDoneRef.current = true;
+            focusNearestDevice(Object.values(posMap));
+            // Auto-show user's current location blue dot
+            showMyLocation(true);
+          }
         }
 
         const now = Date.now();
@@ -383,13 +386,16 @@ const focusNearestDevice = (positionsArray) => {
       if (data.type === 'MAP_READY') {
         setMapReady(true);
         setLoading(false);
-        // When map is ready, send markers and focus nearest device
+        // When map is ready, send markers and do initial focus
         if (Object.keys(positions).length > 0) {
           sendToMap('UPDATE_MARKERS', { positions: Object.values(positions) });
-          focusNearestDevice(Object.values(positions));
+          if (!initialFocusDoneRef.current) {
+            initialFocusDoneRef.current = true;
+            focusNearestDevice(Object.values(positions));
+          }
         }
-        // Auto-show user's current location blue dot
-        showMyLocation();
+        // Show user's current location blue dot (initial fitAll)
+        showMyLocation(!initialFocusDoneRef.current);
       } else if (data.type === 'MARKER_CLICK') {
         const dev = devices.find(d => d.id === data.id);
         if (dev) {
@@ -432,13 +438,14 @@ const focusNearestDevice = (positionsArray) => {
   };
 
   // Auto-center and show blue dot on user's current location
-  const showMyLocation = useCallback(() => {
+  const showMyLocation = useCallback((fitAll = false) => {
     Geolocation.getCurrentPosition(
       position => {
         sendToMap('LOCATE_ME_NATIVE', {
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-          fitAll: true
+          fitAll: fitAll,
+          noPan: !fitAll
         });
       },
       () => {},
@@ -595,7 +602,7 @@ const focusNearestDevice = (positionsArray) => {
             </View>
             <View style={styles.metricItem}>
               <Icon name="battery" size={14} color="#10b981" />
-              <Text style={styles.metricText}>{selectedDevice.battery_level ? `${selectedDevice.battery_level}%` : 'N/A'}</Text>
+              <Text style={styles.metricText}>{selectedDevice.battery_level != null ? `${selectedDevice.battery_level}%` : '0%'}</Text>
             </View>
             <View style={[styles.statusDotLabel, { backgroundColor: selectedDevice.status === 'online' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)' }]}>
               <View style={[styles.dotIndicator, { backgroundColor: selectedDevice.status === 'online' ? '#10b981' : '#ef4444' }]} />
@@ -705,48 +712,48 @@ const styles = StyleSheet.create({
   loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center', zIndex: 1000 },
   loadingText: { marginTop: 12, color: '#1565C0', fontWeight: '800', fontSize: 12, letterSpacing: 1 },
 
-  // Sleek Bottom Action Panel
+  // Sleek Bottom Action Panel (COMPACT MODE)
   actionPanel: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 14,
     elevation: 24,
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: -6 },
     shadowOpacity: 0.12,
     shadowRadius: 16,
   },
-  panelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+  panelHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 },
   panelTitleContainer: { flex: 1 },
-  panelTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
-  panelSubtitle: { fontSize: 12, color: '#64748b', marginTop: 2 },
-  closeBtn: { padding: 6, backgroundColor: '#f1f5f9', borderRadius: 20 },
-  statusMetricsRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 10 },
+  panelTitle: { fontSize: 15, fontWeight: '800', color: '#0f172a' },
+  panelSubtitle: { fontSize: 11, color: '#64748b', marginTop: 1 },
+  closeBtn: { padding: 4, backgroundColor: '#f1f5f9', borderRadius: 20 },
+  statusMetricsRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 6 },
   metricItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  metricText: { fontSize: 12, fontWeight: '600', color: '#475569' },
-  statusDotLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2, paddingHorizontal: 8, borderRadius: 12 },
+  metricText: { fontSize: 11, fontWeight: '600', color: '#475569' },
+  statusDotLabel: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 2, paddingHorizontal: 6, borderRadius: 10 },
   dotIndicator: { width: 6, height: 6, borderRadius: 3 },
-  dotLabelText: { fontSize: 10, fontWeight: '700' },
-  addressLine: { fontSize: 12, color: '#64748b', marginBottom: 14 },
-  panelDivider: { height: 1, backgroundColor: '#f1f5f9', marginBottom: 14 },
-  actionsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 },
-  actionGridItem: { width: '30%', alignItems: 'center', marginBottom: 12 },
+  dotLabelText: { fontSize: 9, fontWeight: '700' },
+  addressLine: { fontSize: 11, color: '#64748b', marginBottom: 8 },
+  panelDivider: { height: 1, backgroundColor: '#f1f5f9', marginBottom: 8 },
+  actionsGrid: { flexDirection: 'row', justifyContent: 'space-between' },
+  actionGridItem: { width: '23%', alignItems: 'center', marginBottom: 4 },
   actionIconBox: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: '#eff6ff',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 4,
   },
-  actionLabel: { fontSize: 11, fontWeight: '600', color: '#334155' },
+  actionLabel: { fontSize: 10, fontWeight: '600', color: '#334155' },
 });
 
 export default MapScreen;

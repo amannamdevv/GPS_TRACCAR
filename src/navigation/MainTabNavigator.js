@@ -1,7 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+
+// Services
+import AlertNotificationService from '../services/AlertNotificationService';
+import UpdateChecker from '../services/UpdateChecker';
 
 // Screens
 import MapScreen from '../screens/map/MapScreen';
@@ -63,6 +67,16 @@ const MeStack = () => (
 
 // ─── MAIN TAB NAVIGATOR ──────────────────────────────────────────────────────
 const MainTabNavigator = () => {
+  useEffect(() => {
+    // Start services only when the user is authenticated and the main tabs are loaded
+    AlertNotificationService.start();
+    UpdateChecker.checkForUpdate();
+    
+    return () => {
+      AlertNotificationService.stop();
+    };
+  }, []);
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({

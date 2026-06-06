@@ -6,6 +6,7 @@ import notifee, {
 } from '@notifee/react-native';
 import Tts from 'react-native-tts';
 import moment from 'moment';
+import { AppState } from 'react-native';
 import BackgroundActions from 'react-native-background-actions';
 import { fetchAlarms, fetchCustomEvents, fetchDeviceList, reverseGeocode } from '../api/webApi';
 
@@ -13,6 +14,7 @@ import { fetchAlarms, fetchCustomEvents, fetchDeviceList, reverseGeocode } from 
 const LAST_EVENT_ID_KEY = 'lastCustomEventId';   // for custom_events API
 const LAST_ALARM_ID_KEY = 'lastAlarmId';          // for alaram API
 const POLLING_INTERVAL_MS = 5000;
+const BACKGROUND_POLLING_INTERVAL_MS = 60000;
 
 // ─── Alert visual config ──────────────────────────────────────────────────────
 const ALERT_CONFIG = {
@@ -59,6 +61,12 @@ class AlertNotificationService {
     this._permissionGranted = false;
     this._firstCustomEventSync = true;
     this._firstAlarmSync = true;
+
+    // Track app state to reduce data usage in background
+    this.appState = AppState.currentState;
+    AppState.addEventListener('change', nextAppState => {
+      this.appState = nextAppState;
+    });
   }
 
   // ── Initialise ───────────────────────────────────────────────────────────────
@@ -77,7 +85,15 @@ class AlertNotificationService {
       this._permissionGranted =
         settings.authorizationStatus === AuthorizationStatus.AUTHORIZED ||
         settings.authorizationStatus === AuthorizationStatus.PROVISIONAL;
-      console.log('[AlertService] Permission granted:', this._permissionGranted);
+      console.log('[AlertService] Notification Permission granted:', this._permissionGranted);
+
+      // Request location permissions gracefully so background service doesn't crash on Android 14
+      const { PermissionsAndroid, Platform } = require('react-native');
+      if (Platform.OS === 'android') {
+        await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+      }
     } catch (e) {
       // Older Android — no runtime permission needed, treat as granted
       this._permissionGranted = true;
@@ -88,9 +104,10 @@ class AlertNotificationService {
     try {
       try { await notifee.deleteChannel('gps_alerts'); } catch (_) { }
       try { await notifee.deleteChannel('gps_alerts_v2'); } catch (_) { }
+      try { await notifee.deleteChannel('gps_alerts_v3'); } catch (_) { }
 
       this.channelId = await notifee.createChannel({
-        id: 'gps_alerts_v3',
+        id: 'gps_alerts_v4',
         name: 'GPS Vehicle Alerts',
         description: 'Real-time GPS tracking alerts',
         importance: AndroidImportance.HIGH,
@@ -102,7 +119,7 @@ class AlertNotificationService {
       console.log('[AlertService] Channel ready:', this.channelId);
     } catch (e) {
       console.warn('[AlertService] Channel init error:', e.message);
-      this.channelId = 'gps_alerts_v3';
+      this.channelId = 'gps_alerts_v4';
     }
   }
 
@@ -311,7 +328,7 @@ class AlertNotificationService {
       if (nowMs - evTimeMs > 3 * 60 * 1000) continue;
 
       const deviceId = alarm.deviceid ?? alarm.deviceId;
-      const deviceName = this._getDeviceName(deviceId, null);
+      const deviceName = this._getDeviceName(deviceId, alarm.device_name);
       
       let address = null;
       let lat = alarm.latitude || alarm.lat || alarm.attributes?.latitude || alarm.attributes?.lat;
@@ -468,14 +485,17 @@ class AlertNotificationService {
     await new Promise(async () => {
       while (BackgroundActions.isRunning()) {
         // Refresh device name map every ~1 minute
-        if (loops % 12 === 0) await this._loadDevices();
+        if (loops % (60000 / POLLING_INTERVAL_MS) === 0) await this._loadDevices();
 
         // Run both polls every cycle
         await this._pollCustomEvents(); // ignition / motion (with address)
         await this._pollAlarms();       // power cut / battery / vibration
 
         loops++;
-        await new Promise(r => setTimeout(r, POLLING_INTERVAL_MS));
+        
+        // Wait 5 seconds in foreground, 60 seconds in background to save data
+        const waitTime = this.appState === 'active' ? POLLING_INTERVAL_MS : BACKGROUND_POLLING_INTERVAL_MS;
+        await new Promise(r => setTimeout(r, waitTime));
       }
     });
   };
@@ -504,6 +524,12 @@ class AlertNotificationService {
         parameters: {},
       };
 
+      const { Platform } = require('react-native');
+      if (Platform.OS === 'android' && Platform.Version >= 34) {
+        // Required for Android 14 (API 34)
+        options.foregroundServiceTypes = ['dataSync', 'location'];
+      }
+
       try {
         await this._loadDevices();
         await BackgroundActions.start(this.backgroundTask, options);
@@ -511,10 +537,16 @@ class AlertNotificationService {
       } catch (e) {
         console.warn('[AlertService] Background task failed — using foreground fallback:', e.message);
         await this._loadDevices();
-        this._fallbackInterval = setInterval(async () => {
+        
+        const runFallback = async () => {
+          if (!this.isPolling) return;
           await this._pollCustomEvents();
           await this._pollAlarms();
-        }, POLLING_INTERVAL_MS);
+          
+          const waitTime = this.appState === 'active' ? POLLING_INTERVAL_MS : BACKGROUND_POLLING_INTERVAL_MS;
+          this._fallbackTimeout = setTimeout(runFallback, waitTime);
+        };
+        runFallback();
       }
     } catch (e) {
       console.error('[AlertService] Critical error during start:', e);
@@ -525,9 +557,9 @@ class AlertNotificationService {
   stop() {
     this.isPolling = false;
     BackgroundActions.stop().catch(() => { });
-    if (this._fallbackInterval) {
-      clearInterval(this._fallbackInterval);
-      this._fallbackInterval = null;
+    if (this._fallbackTimeout) {
+      clearTimeout(this._fallbackTimeout);
+      this._fallbackTimeout = null;
     }
     console.log('[AlertService] Stopped.');
   }

@@ -59,7 +59,8 @@ const normalizeDeviceData = (rawData) => {
     const position_time = dev.position_time || dev.lastupdate || dev.devicetime || dev.fixtime || null;
 
     let status = 'offline';
-    if (dev.status === 'online' || dev.device_status === 'online') {
+    if (dev.status === 'online' || dev.status === 1 || dev.status === '1' ||
+        dev.device_status === 'online' || dev.device_status === 1 || dev.device_status === '1') {
       status = 'online';
     } else if (position_time) {
       const diff = Date.now() - new Date(position_time).getTime();
@@ -82,10 +83,10 @@ const normalizeDeviceData = (rawData) => {
       motion_lon,
       position_time,
       battery_level: dev.battery_level != null ? parseFloat(dev.battery_level) : null,
-      motion_status: dev.motion_status ?? dev.motion ?? null,
+      motion_status: dev.motion === 1 || dev.motion === '1' || dev.motion === true ? 1 : 0,
       dg_status,
-      battery_status: dev.battery_status ?? dev.charge ?? null,
-      ignition_status: dev.ignition_status ?? dev.ignition ?? null,
+      battery_status: dev.charge === 1 || dev.charge === '1' || dev.charge === true ? 1 : 0,
+      ignition_status: dev.ignition === 1 || dev.ignition === '1' || dev.ignition === true ? 1 : 0,
       rssi: dev.rssi ?? null,
       alarm: dev.alarm || null,
     };

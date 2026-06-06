@@ -88,12 +88,12 @@ const TrackingScreen = ({ route, navigation }) => {
           if (data.type === 'UPDATE_POSITION') {
             var latlng = [data.lat, data.lng];
             
-            var popupHtml = 'Status:' + (data.status.charAt(0).toUpperCase() + data.status.slice(1)) + '\\n' +
-                            'Time:' + data.time + '\\n' +
-                            'Engine:' + data.engine + '\\n' +
-                            'Battery:' + data.battery + '\\n' +
-                            (data.alarm ? 'Alarm: ' + data.alarm + '\\n' : '') +
-                            'Distance:' + data.distance;
+            var popupHtml = 'Status: ' + (data.status.charAt(0).toUpperCase() + data.status.slice(1)) + '\\n' +
+                            'Time: ' + data.time + '\\n' +
+                            'Engine: ' + data.engine + '\\n' +
+                            'Motion: ' + data.motion + '\\n' +
+                            'Charging: ' + data.charging + '\\n' +
+                            (data.alarm ? 'Alarm: ' + data.alarm + '\\n' : '');
 
             if (marker) {
               marker.setLatLng(latlng);
@@ -154,7 +154,6 @@ const TrackingScreen = ({ route, navigation }) => {
           const attr = updated.attributes || {};
           let powerStr = attr.power ?? attr.battery ?? attr.io1 ?? attr.adc1;
           powerStr = powerStr != null ? parseFloat(powerStr).toFixed(1) + 'V' : '0.0V';
-          const distStr = attr.totalDistance != null ? (attr.totalDistance / 1000).toFixed(2) + 'km' : (updated.totalDist ? updated.totalDist + 'km' : '0.00km');
 
           sendToMap('UPDATE_POSITION', {
             lat,
@@ -163,11 +162,12 @@ const TrackingScreen = ({ route, navigation }) => {
             course: updated.course || 0,
             follow: followMode,
             time: (updated.position_time || '').replace('T', ' ').substring(0, 19),
-            engine: (updated.ignition || attr.ignition) ? 'ON' : 'OFF',
+            engine: updated.ignition_status === 1 || updated.ignition_status === '1' || updated.ignition_status === true ? 'ON' : 'OFF',
+            motion: updated.motion_status === 1 || updated.motion_status === '1' || updated.motion_status === true ? 'Moving' : 'Stopped',
+            charging: updated.battery_status === 1 || updated.battery_status === '1' || updated.battery_status === true ? 'Charging' : 'Not Charging',
             battery: updated.battery_level || attr.batteryLevel || 0,
             alarm: updated.alarm || attr.alarm || '',
             voltage: powerStr,
-            distance: distStr,
           });
         }
         updateLocationDetails(lat, lng);
@@ -187,7 +187,6 @@ const TrackingScreen = ({ route, navigation }) => {
         const attr = device.attributes || {};
         let powerStr = attr.power ?? attr.battery ?? attr.io1 ?? attr.adc1;
         powerStr = powerStr != null ? parseFloat(powerStr).toFixed(1) + 'V' : '0.0V';
-        const distStr = attr.totalDistance != null ? (attr.totalDistance / 1000).toFixed(2) + 'km' : (device.totalDist ? device.totalDist + 'km' : '0.00km');
 
         sendToMap('UPDATE_POSITION', {
           lat,
@@ -196,11 +195,12 @@ const TrackingScreen = ({ route, navigation }) => {
           course: device.course || 0,
           follow: followMode,
           time: (device.position_time || '').replace('T', ' ').substring(0, 19),
-          engine: (device.ignition || attr.ignition) ? 'ON' : 'OFF',
+          engine: device.ignition_status === 1 || device.ignition_status === '1' || device.ignition_status === true ? 'ON' : 'OFF',
+          motion: device.motion_status === 1 || device.motion_status === '1' || device.motion_status === true ? 'Moving' : 'Stopped',
+          charging: device.battery_status === 1 || device.battery_status === '1' || device.battery_status === true ? 'Charging' : 'Not Charging',
           battery: device.battery_level || attr.batteryLevel || 0,
           alarm: device.alarm || attr.alarm || '',
           voltage: powerStr,
-          distance: distStr,
         });
         updateLocationDetails(lat, lng);
       }

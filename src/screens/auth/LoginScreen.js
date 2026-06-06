@@ -16,6 +16,7 @@ import {
   ActivityIndicator,
   ScrollView,
   Alert,
+  Image,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AuthContext } from '../../context/AuthContext';
@@ -24,9 +25,9 @@ const DEFAULT_SERVER = 'http://gps.shrotitele.com/';
 
 const LoginScreen = ({ navigation }) => {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER);
-  const [email,     setEmail]     = useState('');
-  const [password,  setPassword]  = useState('');
-  const [showPass,  setShowPass]  = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPass, setShowPass] = useState(false);
 
   const { login, isLoading } = useContext(AuthContext);
 
@@ -54,9 +55,13 @@ const LoginScreen = ({ navigation }) => {
         {/* Logo */}
         <View style={styles.logoContainer}>
           <View style={styles.iconCircle}>
-            <Icon name="truck-fast" size={60} color="#1565C0" />
+            <Image
+              source={require('../../assets/logo.png')}
+              style={styles.logoImage}
+              resizeMode="contain"
+            />
           </View>
-          <Text style={styles.title}>Traccar Manager</Text>
+          <Text style={styles.title}>STPL GPS</Text>
           <Text style={styles.subtitle}>Real-time GPS Tracking</Text>
         </View>
 
@@ -148,9 +153,9 @@ const styles = StyleSheet.create({
     marginBottom: 36,
   },
   iconCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
     backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
@@ -160,6 +165,11 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 6,
+    overflow: 'hidden',
+  },
+  logoImage: {
+    width: 90,
+    height: 90,
   },
   title: {
     fontSize: 28,

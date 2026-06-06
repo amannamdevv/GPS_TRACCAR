@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, TouchableOpacity, StatusBar } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import moment from 'moment';
 import Header from '../../components/Header';
@@ -42,29 +43,54 @@ const AlertsScreen = ({ navigation }) => {
   const [refreshing, setRefreshing] = useState(false);
 
   const loadData = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    try {
-      const [alarmsRaw, customRaw, devicesData] = await Promise.all([
-        fetchAlarms(),
-        fetchCustomEvents(),
-        fetchDeviceList(),
-      ]);
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      // Instant load from cache for normal visits
+      try {
+        const cached = await AsyncStorage.getItem('cached_alerts_data');
+        if (cached) {
+          setAlerts(JSON.parse(cached));
+          setLoading(false);
+        }
+      } catch (e) {}
+    }
 
-      // Build a Set of device IDs that belong to the logged-in user
-      const myDevices = Array.isArray(devicesData)
-        ? devicesData
-        : (devicesData?.devices || []);
-      const myDeviceIds = new Set(
-        myDevices.map(d => String(d.id ?? d.deviceid ?? '')).filter(Boolean)
-      );
+    try {
+      // Load cached device IDs so we don't have to wait for the slow fetchDeviceList API
+      let myDeviceIds = new Set();
+      try {
+        const cachedIds = await AsyncStorage.getItem('cached_device_ids');
+        if (cachedIds) myDeviceIds = new Set(JSON.parse(cachedIds));
+      } catch(e) {}
+
+      // Fetch all three but DO NOT wait for fetchDeviceList to process alerts
+      const alarmsPromise = fetchAlarms();
+      const customPromise = fetchCustomEvents();
+      const devicesPromise = fetchDeviceList();
+
+      // Update cached device IDs in the background
+      devicesPromise.then(devicesData => {
+        const myDevices = Array.isArray(devicesData) ? devicesData : (devicesData?.devices || []);
+        const ids = myDevices.map(d => String(d.id ?? d.deviceid ?? '')).filter(Boolean);
+        AsyncStorage.setItem('cached_device_ids', JSON.stringify(ids)).catch(()=>{});
+        
+        // If we didn't have cached IDs, we should use the fresh ones
+        if (myDeviceIds.size === 0 && ids.length > 0) {
+            myDeviceIds = new Set(ids);
+        }
+      }).catch(()=>{});
+
+      // Only wait for the actual alert data
+      const [alarmsRaw, customRaw] = await Promise.all([alarmsPromise, customPromise]);
 
       let alarmsList = Array.isArray(alarmsRaw) ? alarmsRaw : (alarmsRaw?.data || []);
       let customList = Array.isArray(customRaw) ? customRaw : (customRaw?.data || []);
 
-      // Filter alarms to only those belonging to user's devices
-      alarmsList = alarmsList.filter(a =>
-        myDeviceIds.has(String(a.deviceId ?? a.deviceid ?? ''))
-      );
+      // Filter alarms to only those belonging to user's devices (if device IDs known)
+      if (myDeviceIds.size > 0) {
+        alarmsList = alarmsList.filter(a => myDeviceIds.has(String(a.deviceId ?? a.deviceid ?? '')));
+      }
 
       // Normalize custom events
       const normalizedCustom = customList.map(e => {
@@ -84,10 +110,14 @@ const AlertsScreen = ({ navigation }) => {
           latitude: parseFloat(e.latitude || e.lat) || 0,
           longitude: parseFloat(e.longitude || e.lon) || 0,
         };
-      // Filter custom events to only those belonging to user's devices
-      }).filter(e => myDeviceIds.has(String(e.deviceId ?? '')));
+      });
 
-      let combined = [...alarmsList, ...normalizedCustom];
+      // Filter custom events
+      const filteredCustom = myDeviceIds.size > 0 
+        ? normalizedCustom.filter(e => myDeviceIds.has(String(e.deviceId ?? '')))
+        : normalizedCustom;
+
+      let combined = [...alarmsList, ...filteredCustom];
 
       // Filter today's alerts
       const todayStart = moment().startOf('day');
@@ -104,7 +134,11 @@ const AlertsScreen = ({ navigation }) => {
         return timeB - timeA;
       });
 
+      // Limit to 100 to ensure fast rendering on refresh
+      combined = combined.slice(0, 100);
+
       setAlerts(combined);
+      AsyncStorage.setItem('cached_alerts_data', JSON.stringify(combined)).catch(()=>{});
     } catch (error) {
       console.warn('Failed to load alerts', error);
     } finally {
@@ -182,6 +216,9 @@ const AlertsScreen = ({ navigation }) => {
               <Text style={styles.emptyText}>No alerts triggered today</Text>
             </View>
           }
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={5}
         />
       )}
     </View>

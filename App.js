@@ -9,11 +9,8 @@ import UpdateChecker from './src/services/UpdateChecker';
 
 const App = () => {
   useEffect(() => {
-    AlertNotificationService.start();
-    UpdateChecker.checkForUpdate();
-    return () => {
-      AlertNotificationService.stop();
-    };
+    // Background services moved to MainTabNavigator to prevent crashes on startup
+    // due to missing permissions before login.
   }, []);
 
   return (

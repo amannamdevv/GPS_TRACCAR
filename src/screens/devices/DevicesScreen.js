@@ -93,7 +93,7 @@ const DevicesScreen = ({ navigation }) => {
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <Header
-        title="Fleet Status"
+        title="DG Status"
         navigation={navigation}
         rightAction={
           <TouchableOpacity onPress={() => setShowSearch(!showSearch)} style={{ padding: 8 }}>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Share } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Share, Linking } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Header from '../../components/Header';
 import moment from 'moment';
@@ -43,18 +43,18 @@ Last Update: ${formatDate(device.position_time)}
     { category: 'Current Status', rows: [
       { label: 'Connection Status', value: isOnline ? 'Online' : 'Offline', icon: 'connection', color: isOnline ? '#10b981' : '#ef4444' },
       { label: 'Speed', value: `${device.speedKmh || 0} km/h`, icon: 'speedometer' },
-      { label: 'Motion', value: device.motion_status === 'moving' || device.motion_status === true || (device.speedKmh || 0) > 2 ? 'Moving' : 'Stopped', icon: 'run' },
+      { label: 'Motion', value: device.motion_status === 1 || device.motion_status === '1' || device.motion_status === true ? 'Moving' : 'Stopped', icon: 'run' },
       { label: 'Engine Ignition', value: device.ignition_status === 1 || device.ignition_status === '1' || device.ignition_status === true ? 'ON' : 'OFF', icon: 'key' },
     ]},
     { category: 'Sensor & Power Attributes', rows: [
       { label: 'Battery Level', value: device.battery_level != null ? `${device.battery_level}%` : '0%', icon: 'battery' },
       { label: 'DG Status', value: device.dg_status === 1 || device.dg_status === '1' ? 'ON' : 'OFF', icon: 'lightning-bolt' },
-      { label: 'Charging State', value: device.battery_status === 'charging' || device.battery_status === true ? 'Charging' : 'Not Charging', icon: 'power-plug' },
-      { label: 'GSM Signal (RSSI)', value: device.rssi ? `${device.rssi} / 31` : 'N/A', icon: 'signal' },
+      { label: 'Charging State', value: device.battery_status === 1 || device.battery_status === '1' || device.battery_status === true ? 'Charging' : 'Not Charging', icon: 'power-plug' },
+      { label: 'Network Strength', value: device.rssi ? `${device.rssi}` : 'N/A', icon: 'signal' },
     ]},
     { category: 'Location Telemetry', rows: [
-      { label: 'Latitude', value: device.motion_lat ? parseFloat(device.motion_lat).toFixed(6) : 'N/A', icon: 'latitude' },
-      { label: 'Longitude', value: device.motion_lon ? parseFloat(device.motion_lon).toFixed(6) : 'N/A', icon: 'longitude' },
+      { label: 'View Exact Location', value: 'Open Google Maps →', icon: 'google-maps', isMapLink: true,
+        lat: device.motion_lat, lon: device.motion_lon },
       { label: 'Last Position Time', value: formatDate(device.position_time), icon: 'clock' },
     ]}
   ];
@@ -79,15 +79,33 @@ Last Update: ${formatDate(device.position_time)}
             <View style={styles.card}>
               {sec.rows.map((row, rIdx) => (
                 <View key={rIdx}>
-                  <View style={styles.row}>
-                    <View style={styles.rowLeft}>
-                      <Icon name={row.icon} size={20} color="#64748b" style={styles.icon} />
-                      <Text style={styles.rowLabel}>{row.label}</Text>
+                  {row.isMapLink ? (
+                    <TouchableOpacity
+                      style={styles.row}
+                      onPress={() => {
+                        if (row.lat && row.lon) {
+                          const url = `https://www.google.com/maps?q=${row.lat},${row.lon}`;
+                          Linking.openURL(url).catch(() => {});
+                        }
+                      }}
+                    >
+                      <View style={styles.rowLeft}>
+                        <Icon name={row.icon} size={20} color="#1565C0" style={styles.icon} />
+                        <Text style={styles.rowLabel}>{row.label}</Text>
+                      </View>
+                      <Text style={[styles.rowValue, { color: '#1565C0' }]}>{row.value}</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <View style={styles.row}>
+                      <View style={styles.rowLeft}>
+                        <Icon name={row.icon} size={20} color="#64748b" style={styles.icon} />
+                        <Text style={styles.rowLabel}>{row.label}</Text>
+                      </View>
+                      <Text style={[styles.rowValue, row.color ? { color: row.color, fontWeight: '700' } : {}]}>
+                        {row.value}
+                      </Text>
                     </View>
-                    <Text style={[styles.rowValue, row.color ? { color: row.color, fontWeight: '700' } : {}]}>
-                      {row.value}
-                    </Text>
-                  </View>
+                  )}
                   {rIdx < sec.rows.length - 1 && <View style={styles.divider} />}
                 </View>
               ))}

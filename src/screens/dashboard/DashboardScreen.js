@@ -283,20 +283,31 @@ const DashboardScreen = ({ navigation }) => {
       dgOff: baseDevices.length - dgOn,
       moving,
       stopped: baseDevices.length - moving,
-    };
+  };
   }, [baseDevices, isDgOn, isMoving]);
 
   // ─── CHART DATA: reflects baseDevices breakdown ──────────────────────────
   const chartTotal = baseDevices.length;
   const chartEntries = useMemo(() => {
-    // Show only DG & Motion breakdown for all states
-    return [
-      { label: 'DG ON', val: secondaryMetrics.dgOn, color: '#3b82f6', filterKey: 'dg_on' },
-      { label: 'DG OFF', val: secondaryMetrics.dgOff, color: '#64748b', filterKey: 'dg_off' },
-      { label: 'Moving', val: secondaryMetrics.moving, color: '#f59e0b', filterKey: 'moving' },
-      { label: 'Stopped', val: secondaryMetrics.stopped, color: '#8b5cf6', filterKey: 'stopped' },
-    ];
-  }, [secondaryMetrics]);
+    if (primaryFilter === 'all') {
+      // Show only Active and Inactive counts for Total Devices
+      return [
+        { label: 'Active', val: globalMetrics.online, color: '#10b981', filterKey: 'online' },
+        { label: 'Inactive', val: globalMetrics.offline, color: '#ef4444', filterKey: 'offline' },
+      ];
+    }
+    if (primaryFilter === 'online') {
+      // Detailed DG & Motion breakdown for Active devices
+      return [
+        { label: 'DG ON', val: secondaryMetrics.dgOn, color: '#3b82f6', filterKey: 'dg_on' },
+        { label: 'DG OFF', val: secondaryMetrics.dgOff, color: '#64748b', filterKey: 'dg_off' },
+        { label: 'Moving', val: secondaryMetrics.moving, color: '#f59e0b', filterKey: 'moving' },
+        { label: 'Stopped', val: secondaryMetrics.stopped, color: '#8b5cf6', filterKey: 'stopped' },
+      ];
+    }
+    // For Inactive (offline) we don't show a donut chart
+    return [];
+  }, [primaryFilter, globalMetrics, secondaryMetrics]);
 
   // ─── FILTERED LIST: secondaryFilter applied ON TOP OF baseDevices ────────
   const filteredDevices = useMemo(() => {
@@ -323,8 +334,8 @@ const DashboardScreen = ({ navigation }) => {
   // ─── STAT CARDS CONFIG ──────────────────────────────────────────────────────
   const primaryCards = [
     { key: 'all', label: 'Total Devices', val: globalMetrics.total, icon: 'devices', iconBg: 'rgba(21,101,192,0.1)', iconColor: '#1565C0' },
-    { key: 'online', label: 'Active Online', val: globalMetrics.online, icon: 'check-circle', iconBg: 'rgba(16,185,129,0.1)', iconColor: '#10b981' },
-    { key: 'offline', label: 'Inactive Offline', val: globalMetrics.offline, icon: 'close-circle', iconBg: 'rgba(239,68,68,0.1)', iconColor: '#ef4444' },
+    { key: 'online', label: 'Active', val: globalMetrics.online, icon: 'check-circle', iconBg: 'rgba(16,185,129,0.1)', iconColor: '#10b981' },
+    { key: 'offline', label: 'Inactive', val: globalMetrics.offline, icon: 'close-circle', iconBg: 'rgba(239,68,68,0.1)', iconColor: '#ef4444' },
   ];
 
   // Secondary cards: counts scoped to baseDevices (respects primaryFilter)
@@ -337,10 +348,8 @@ const DashboardScreen = ({ navigation }) => {
 
   // ─── CHART TITLE ────────────────────────────────────────────────────────────
   const chartTitle = useMemo(() => {
-    if (primaryFilter === 'online') return 'Online Devices — DG & Motion Breakdown';
-    if (primaryFilter === 'offline') return 'Offline Devices — DG & Motion Breakdown';
-    return 'Device Status Overview';
-  }, [primaryFilter]);
+    return `${primaryLabel} Devices — Metrics Breakdown`;
+  }, [primaryFilter, primaryLabel]);
 
   // ─── HEADER ─────────────────────────────────────────────────────────────────
   const renderHeader = () => (
@@ -374,34 +383,50 @@ const DashboardScreen = ({ navigation }) => {
           </TouchableOpacity>
         ))}
       </View>
-
-
-
       {/* Context hint */}
-      {(primaryFilter === 'online' || primaryFilter === 'offline') && (
+      {primaryFilter === 'online' && (
         <Text style={styles.contextHint}>
           Showing DG & Motion counts within{' '}
           <Text style={{ fontWeight: '700', color: '#1565C0' }}>
-            {primaryFilter === 'online' ? 'Online' : 'Offline'}
+            {primaryLabel}
           </Text>{' '}
           devices only
         </Text>
       )}
 
       {/* ── BIG Donut Chart ── */}
-      <DonutChart
-        total={chartTotal}
-        title={chartTitle}
-        activeFilter={secondaryFilter}
-        onFilterSelect={handleSecondaryFilter}
-        dataEntries={chartEntries}
-      />
+      {primaryFilter !== 'offline' && chartEntries.length > 0 && (
+        <DonutChart
+          total={chartTotal}
+          title={chartTitle}
+          activeFilter={secondaryFilter}
+          onFilterSelect={handleSecondaryFilter}
+          dataEntries={chartEntries}
+        />
+      )}
+      
+      {primaryFilter === 'online' && (
+        <View style={styles.secondaryRow}>
+          {secondaryCards.map(c => (
+            <TouchableOpacity
+              key={c.key}
+              style={[styles.secondaryCard, secondaryFilter === c.key && styles.secondaryCardActive]}
+              onPress={() => handleSecondaryFilter(c.key)}
+              activeOpacity={0.8}
+            >
+              <Icon name={c.icon} size={18} color={c.color} />
+              <Text style={styles.secondaryVal}>{c.val}</Text>
+              <Text style={styles.secondaryLabel}>{c.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       {/* Table header with filter chips */}
       <View style={styles.tableHeader}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Text style={styles.tableTitle}>
-            {primaryFilter === 'all' ? 'All Devices' : primaryFilter === 'online' ? 'Online Devices' : 'Offline Devices'}
+            {primaryFilter === 'all' ? 'All Devices' : primaryFilter === 'online' ? 'Active Devices' : 'Inactive Devices'}
           </Text>
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{filteredDevices.length} items</Text>

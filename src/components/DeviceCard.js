@@ -4,35 +4,19 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { reverseGeocode } from '../api/webApi';
 
 const getSignalInfo = (rssiVal) => {
-  if (rssiVal === undefined || rssiVal === null) {
-    return { percentage: 0, bars: 0, icon: 'signal-cellular-outline', label: 'N/A' };
-  }
-  const val = parseFloat(rssiVal);
-  if (isNaN(val) || val < 0) {
-    return { percentage: 0, bars: 0, icon: 'signal-cellular-outline', label: '0%' };
+  const val = parseInt(rssiVal);
+  if (isNaN(val) || val <= 0) {
+    return { icon: 'signal-off', color: '#ef4444' };
   }
 
-  let bars = 0;
-  let percentage = 0;
+  let bars = Math.max(0, Math.min(4, val));
+  let iconName = 'network-strength-outline';
+  if (bars === 1) iconName = 'network-strength-1';
+  else if (bars === 2) iconName = 'network-strength-2';
+  else if (bars === 3) iconName = 'network-strength-3';
+  else if (bars >= 4) iconName = 'network-strength-4';
 
-  if (val <= 4) {
-    bars = Math.round(val);
-    percentage = bars * 25;
-  } else {
-    percentage = Math.min(100, Math.round((val / 31) * 100));
-    if (percentage <= 25) bars = 1;
-    else if (percentage <= 50) bars = 2;
-    else if (percentage <= 75) bars = 3;
-    else bars = 4;
-  }
-
-  bars = Math.max(0, Math.min(4, bars));
-  let iconName = 'signal-cellular-outline';
-  if (bars === 1) iconName = 'signal-cellular-1';
-  else if (bars === 2) iconName = 'signal-cellular-2';
-  else if (bars >= 3) iconName = 'signal-cellular-3';
-
-  return { percentage, bars, icon: iconName, label: `${Math.round(val)} CSQ` };
+  return { icon: iconName, color: '#10b981' };
 };
 
 const DeviceCard = ({ device, onPress }) => {
@@ -42,14 +26,11 @@ const DeviceCard = ({ device, onPress }) => {
   const statusStr = String(device.status || '').toLowerCase();
   const isOnline = statusStr === 'online';
 
-  const motionStr = String(device.motion_status || '').toLowerCase();
-  const isMoving = motionStr === 'moving' || motionStr === 'true' || motionStr === '1' || device.motion_status === true;
+  const isMoving = device.motion_status === 1 || device.motion_status === '1' || device.motion_status === true;
 
-  const dgStr = String(device.dg_status || '').toLowerCase();
-  const isDgOn = dgStr === '1' || dgStr === 'on' || dgStr === 'true';
+  const isDgOn = device.dg_status === 1 || device.dg_status === '1' || device.dg_status === true;
 
-  const batteryStr = String(device.battery_status || '').toLowerCase();
-  const isCharging = batteryStr === 'charging' || batteryStr === 'true' || batteryStr === '1' || device.battery_status === true;
+  const isCharging = device.battery_status === 1 || device.battery_status === '1' || device.battery_status === true;
 
   useEffect(() => {
     let active = true;
@@ -91,13 +72,8 @@ const DeviceCard = ({ device, onPress }) => {
   let statusColor = '#ef4444'; // Red (offline)
   let statusLabel = 'Offline';
   if (isOnline) {
-    if (isMoving) {
-      statusColor = '#10b981'; // Green (moving)
-      statusLabel = 'Moving';
-    } else {
-      statusColor = '#0284c7'; // Blue (stopped)
-      statusLabel = 'Online';
-    }
+    statusColor = '#10b981'; // Green
+    statusLabel = 'Online';
   }
 
   return (
@@ -127,14 +103,18 @@ const DeviceCard = ({ device, onPress }) => {
           </View>
 
           <View style={styles.telItem}>
+            <Icon name="run" size={16} color={isMoving ? '#10b981' : '#64748b'} />
+            <Text style={styles.telValue}>{isMoving ? 'Moving' : 'Stopped'}</Text>
+          </View>
+
+          <View style={styles.telItem}>
             <Icon name={isCharging ? "battery-charging" : "battery-std"} size={16} color="#0284c7" />
             <Text style={styles.telLabel}>Batt:</Text>
             <Text style={styles.telValue}>{device.battery_level != null ? `${device.battery_level}%` : '0%'}</Text>
           </View>
 
           <View style={styles.telItem}>
-            <Icon name="signal" size={16} color="#64748b" />
-            <Text style={styles.telValue}>{signalInfo.label}</Text>
+            <Icon name={signalInfo.icon} size={20} color={signalInfo.color} />
           </View>
         </View>
 

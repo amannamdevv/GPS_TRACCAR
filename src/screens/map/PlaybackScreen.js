@@ -86,23 +86,23 @@ const normalizePoint = (p) => {
     const parseAttr = (attr) => {
       if (!attr) return {};
       if (typeof attr === 'string') {
-        try { return JSON.parse(attr); } catch(e) { return {}; }
+        try { return JSON.parse(attr); } catch (e) { return {}; }
       }
       return attr;
     };
-    
+
     const startAttr = parseAttr(p.start_attributes);
     const endAttr = parseAttr(p.end_attributes);
-    
+
     const s1 = startAttr.speed ?? startAttr.speedKmh ?? startAttr.speed_kmh ?? startAttr.Speed ?? null;
     const s2 = endAttr.speed ?? endAttr.speedKmh ?? endAttr.speed_kmh ?? endAttr.Speed ?? null;
-    
+
     speedFromAttr = parseFloat(s1 ?? s2 ?? 0);
-  } catch (e) {}
+  } catch (e) { }
 
   let finalSpeed = parseFloat(p.speedKmh ?? p.speed ?? 0);
   if (finalSpeed === 0 || isNaN(finalSpeed)) finalSpeed = speedFromAttr;
-  
+
   if ((finalSpeed === 0 || isNaN(finalSpeed)) && p.covered_distance_km && p.total_duration_minutes) {
     const dist = parseFloat(p.covered_distance_km);
     const mins = parseFloat(p.total_duration_minutes);
@@ -116,7 +116,7 @@ const normalizePoint = (p) => {
     longitude: parseFloat(p.start_longitude ?? p.motion_lon ?? p.longitude ?? p.lon ?? 0),
     speedKmh: isNaN(finalSpeed) ? 0 : finalSpeed,
     course: parseFloat(p.course ?? 0),
-    fixTime: p.start_time ?? p.position_time ?? p.fixTime ?? new Date().toISOString(),
+    fixTime: p.start_time ?? p.position_time ?? p.fixTime ?? null,
     ignition_status: p.ignition_status ?? p.ignition ?? null,
     battery_level: p.battery_level ?? null,
     final_status: p.final_status ?? null,
@@ -134,7 +134,7 @@ const PlaybackScreen = ({ route, navigation }) => {
   const [loadError, setLoadError] = useState('');
 
   // ── Time filter modal ──────────────────────────────────────────────────────
-  const [showTimeModal, setShowTimeModal] = useState(true);
+  const [showTimeModal, setShowTimeModal] = useState(false);
   const [timeframe, setTimeframe] = useState('today');
   const [tempTf, setTempTf] = useState('today');
   const [customStart, setCustomStart] = useState(new Date());
@@ -232,6 +232,13 @@ const PlaybackScreen = ({ route, navigation }) => {
         to: fmt(now),
       };
     }
+    if (tf === '5days') {
+      const start = now.clone().subtract(5, 'day').startOf('day');
+      return {
+        from: fmt(start),
+        to: fmt(now),
+      };
+    }
     // custom
     return {
       from: fmt(moment(customStart)),
@@ -262,7 +269,7 @@ const PlaybackScreen = ({ route, navigation }) => {
       const raw = await fetchAllPositions(deviceId, from, to);
 
       if (!raw || raw.length === 0) {
-        setLoadError('Is time range mein koi GPS data nahi mila.');
+        setLoadError('No GPS data found for the selected time range.');
         sendToMap('CLEAR_ALL');
         setLoading(false);
         return;
@@ -273,11 +280,30 @@ const PlaybackScreen = ({ route, navigation }) => {
         .map(normalizePoint)
         .filter(p => p.latitude !== 0 && p.longitude !== 0);
 
-      // Only keep MOVE points — remove STOP, OFF, IDLE
+      // ── CLIENT-SIDE TIME FILTER ──
+      // API sometimes returns data outside the requested range,
+      // so we strictly keep only points within [from, to].
+      const fromMs = moment(from, 'YYYY-MM-DD HH:mm:ss').valueOf();
+      const toMs   = moment(to,   'YYYY-MM-DD HH:mm:ss').valueOf();
+      points = points.filter(p => {
+        if (!p.fixTime) return false;           // skip records with no timestamp
+        const t = moment(p.fixTime).valueOf();
+        return t >= fromMs && t <= toMs;
+      });
+
+      if (points.length === 0) {
+        setLoadError('No GPS data found for the selected time range.');
+        sendToMap('CLEAR_ALL');
+        setLoading(false);
+        return;
+      }
+
+      // Keep MOVE and STOP points
       points = points.filter(p => {
         const st = String(p.final_status || '').toUpperCase();
         if (st === 'MOVE' || st === 'MOVING') return true;
-        if (!st || st === '—' || st === 'NULL') return p.speedKmh > 2; // fallback: speed-based
+        if (st === 'STOP' || st === 'STOPPED' || st === 'IDLE' || st === 'PARK') return true;
+        if (!st || st === '—' || st === 'NULL') return true;
         return false;
       });
 
@@ -298,7 +324,7 @@ const PlaybackScreen = ({ route, navigation }) => {
       }
 
       if (points.length < 2) {
-        setLoadError('Sirf ek GPS point mila — playback ke liye 2+ points chahiye.');
+        setLoadError('Only one GPS point found — at least 2 points are needed for playback.');
         setLoading(false);
         return;
       }
@@ -342,7 +368,7 @@ const PlaybackScreen = ({ route, navigation }) => {
       setShowHUD(true);
     } catch (e) {
       console.warn('[loadAndAnimate]', e);
-      setLoadError('Data load karne mein error aaya.');
+      setLoadError('An error occurred while loading data. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -513,6 +539,7 @@ const PlaybackScreen = ({ route, navigation }) => {
     today: 'Today',
     yesterday: 'Yesterday',
     hour: 'Last 1 Hr',
+    "5days": 'Last 5 Days',
     custom: `${moment(customStart).format('DD MMM')} – ${moment(customEnd).format('DD MMM')}`,
   };
 
@@ -656,9 +683,6 @@ window.dispatchPlayback = function(s) {
 
     // Car at start
     carM = L.marker(d.coords[0], {icon:carIcon(0,0),zIndexOffset:1000}).addTo(map);
-    var ft = d.firstTelemetry||{};
-    carM.bindPopup(buildPopup(ft),{className:'lpw',maxWidth:260,closeButton:true,autoPan:false,keepInView:false});
-    carM.openPopup();
 
     // fitBounds ONCE
     map.fitBounds(routeLine.getBounds(),{padding:[65,65],animate:true,duration:1.0});
@@ -668,8 +692,6 @@ window.dispatchPlayback = function(s) {
   if (d.type === 'UPDATE_CAR' && carM && d.coord) {
     carM.setLatLng(d.coord);
     carM.setIcon(carIcon(d.course||0, d.speed||0));
-    if(d.telemetry) carM.setPopupContent(buildPopup(d.telemetry));
-    if(!carM.isPopupOpen()) carM.openPopup();
 
     // Smooth follow — panTo only, no fitBounds, stable zoom
     if(d.follow){
@@ -727,21 +749,27 @@ setTimeout(function(){
       </View>
 
       {/* ── ZOOM BUTTONS (right side, above HUD) ── */}
-      <View style={s.zoomPanel}>
-        <TouchableOpacity style={s.zoomBtn} onPress={zoomIn} activeOpacity={0.75}>
-          <Text style={s.zoomTxt}>+</Text>
-        </TouchableOpacity>
-        <View style={s.zoomDiv} />
-        <TouchableOpacity style={s.zoomBtn} onPress={zoomOut} activeOpacity={0.75}>
-          <Text style={s.zoomTxt}>−</Text>
-        </TouchableOpacity>
-      </View>
+      {(loadError === '' && !loading) && (
+        <View style={s.zoomPanel}>
+          <TouchableOpacity style={s.zoomBtn} onPress={zoomIn} activeOpacity={0.75}>
+            <Text style={s.zoomTxt}>+</Text>
+          </TouchableOpacity>
+          <View style={s.zoomDiv} />
+          <TouchableOpacity style={s.zoomBtn} onPress={zoomOut} activeOpacity={0.75}>
+            <Text style={s.zoomTxt}>−</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {/* ── ERROR BANNER ── */}
+      {/* ── NO DATA OVERLAY ── */}
       {loadError !== '' && !loading && (
-        <View style={s.errorBanner}>
-          <Icon name="alert-circle-outline" size={16} color="#fca5a5" />
-          <Text style={s.errorTxt}>{loadError}</Text>
+        <View style={s.noDataOverlay}>
+          <Icon name="map-marker-off" size={60} color="#334155" />
+          <Text style={s.noDataTitle}>No Playback Data</Text>
+          <Text style={s.noDataText}>{loadError}</Text>
+          <TouchableOpacity style={s.noDataBtn} onPress={() => { setTempTf(timeframe); setShowTimeModal(true); }}>
+            <Text style={s.noDataBtnTxt}>Change Time Range</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -768,12 +796,17 @@ setTimeout(function(){
                 {
                   key: 'hour',
                   label: 'Last 1 Hour',
-                  sub: `${moment().subtract(1, 'hour').format('HH:mm')} → ${moment().format('HH:mm')} abhi`,
+                  sub: `${moment().subtract(1, 'hour').format('HH:mm')} → ${moment().format('HH:mm')} now`,
                 },
                 {
                   key: 'custom',
                   label: 'Custom Range',
-                  sub: 'Apna time manually choose karo',
+                  sub: 'Choose your custom time range',
+                },
+                {
+                  key: '5days',
+                  label: 'Last 5 Days',
+                  sub: `${moment().subtract(5, 'day').format('DD MMM YYYY')} – ${moment().format('DD MMM YYYY')}`,
                 },
               ].map(opt => (
                 <TouchableOpacity
@@ -1005,8 +1038,7 @@ setTimeout(function(){
       {loading && (
         <View style={s.loader}>
           <ActivityIndicator size="large" color="#f97316" />
-          <Text style={s.loaderTxt}>Route load ho raha hai...</Text>
-          <Text style={s.loaderSub}>{tfLabel[timeframe] || ''} ka GPS data fetch ho raha hai</Text>
+          <Text style={s.loaderTxt}>Loading...</Text>
         </View>
       )}
     </View>
@@ -1062,12 +1094,12 @@ const s = StyleSheet.create({
   },
   errorTxt: { flex: 1, color: '#fca5a5', fontSize: 12, fontWeight: '600' },
 
-  // HUD
+  // HUD (COMPACT)
   hud: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
     backgroundColor: '#0f1420',
-    borderTopLeftRadius: 22, borderTopRightRadius: 22,
-    paddingHorizontal: 16, paddingTop: 12,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6,
     borderTopWidth: 1, borderTopColor: 'rgba(249,115,22,0.2)',
     elevation: 24,
     shadowColor: '#000', shadowOffset: { width: 0, height: -6 },
@@ -1076,7 +1108,7 @@ const s = StyleSheet.create({
 
   // HUD top row
   hudTopRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10,
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4,
   },
   statusPill: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
@@ -1089,7 +1121,7 @@ const s = StyleSheet.create({
   ptCount: { fontSize: 10, color: '#2d3748' },
 
   // Progress bar
-  progWrap: { marginBottom: 8 },
+  progWrap: { marginBottom: 4 },
   progBg: {
     height: 28, backgroundColor: 'transparent', borderRadius: 4,
     overflow: 'visible', position: 'relative',
@@ -1114,15 +1146,15 @@ const s = StyleSheet.create({
 
   // Stats grid
   statsGrid: {
-    flexDirection: 'row', gap: 3, marginBottom: 6, alignItems: 'stretch',
+    flexDirection: 'row', gap: 3, marginBottom: 4, alignItems: 'stretch',
   },
   stat: {
     flex: 1, alignItems: 'center',
-    backgroundColor: '#0d1117', borderRadius: 10,
-    paddingVertical: 7, paddingHorizontal: 3,
+    backgroundColor: '#0d1117', borderRadius: 8,
+    paddingVertical: 4, paddingHorizontal: 2,
   },
   statWide: { flex: 1.4 },
-  statV: { fontSize: 13, fontWeight: '800', color: '#f8fafc', textAlign: 'center' },
+  statV: { fontSize: 12, fontWeight: '800', color: '#f8fafc', textAlign: 'center' },
   statL: {
     fontSize: 8, color: '#374151', marginTop: 3,
     textTransform: 'uppercase', textAlign: 'center', letterSpacing: 0.3,
@@ -1132,32 +1164,32 @@ const s = StyleSheet.create({
   // Controls
   controls: {
     flexDirection: 'row', justifyContent: 'center',
-    alignItems: 'center', gap: 14, marginBottom: 10,
+    alignItems: 'center', gap: 12, marginBottom: 6,
   },
   ctrlBtn: {
-    width: 42, height: 42, borderRadius: 21,
+    width: 36, height: 36, borderRadius: 18,
     backgroundColor: '#0d1117', justifyContent: 'center', alignItems: 'center',
     borderWidth: 1, borderColor: '#1e2533',
   },
   playBtn: {
-    width: 62, height: 62, borderRadius: 31,
+    width: 48, height: 48, borderRadius: 24,
     backgroundColor: '#f97316', justifyContent: 'center', alignItems: 'center',
     elevation: 10, shadowColor: '#f97316',
     shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.65, shadowRadius: 12,
   },
   speedBtn: {
-    width: 52, height: 42, borderRadius: 12,
+    width: 42, height: 36, borderRadius: 10,
     backgroundColor: '#0d1117', justifyContent: 'center', alignItems: 'center',
     borderWidth: 1.5, borderColor: '#f97316',
   },
-  speedTxt: { fontSize: 13, fontWeight: '900', color: '#f97316' },
+  speedTxt: { fontSize: 11, fontWeight: '900', color: '#f97316' },
 
   // Address
   addrBox: {
-    backgroundColor: '#0d1117', paddingVertical: 7, paddingHorizontal: 12,
-    borderRadius: 10, borderWidth: 1, borderColor: '#1e2533', marginBottom: 2,
+    backgroundColor: '#0d1117', paddingVertical: 4, paddingHorizontal: 8,
+    borderRadius: 8, borderWidth: 1, borderColor: '#1e2533', marginBottom: 2,
   },
-  addrTxt: { fontSize: 11.5, color: '#6b7280', textAlign: 'center', lineHeight: 17 },
+  addrTxt: { fontSize: 10, color: '#6b7280', textAlign: 'center', lineHeight: 14 },
 
   // Modal
   modalOverlay: {
@@ -1204,6 +1236,18 @@ const s = StyleSheet.create({
   },
   loaderTxt: { marginTop: 14, color: '#f97316', fontWeight: '800', fontSize: 14 },
   loaderSub: { marginTop: 5, color: '#4b5563', fontSize: 11 },
+
+  // No Data Overlay
+  noDataOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: '#0d1117',
+    justifyContent: 'center', alignItems: 'center', zIndex: 90,
+    paddingHorizontal: 30,
+  },
+  noDataTitle: { fontSize: 20, fontWeight: '800', color: '#f1f5f9', marginTop: 16 },
+  noDataText: { fontSize: 14, color: '#64748b', textAlign: 'center', marginTop: 8, lineHeight: 20 },
+  noDataBtn: { marginTop: 24, backgroundColor: '#f97316', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 12 },
+  noDataBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
 });
 
 export default PlaybackScreen;
