@@ -183,11 +183,11 @@ class AlertNotificationService {
     let maxNewId = lastId;
 
     // ── FIRST RUN: sync to current max, don't notify anything ───────────────
-    if (lastId === 0 || this._firstCustomEventSync) {
+    if (lastId === 0) {
       const maxId = events.reduce((m, e) => Math.max(m, parseInt(e.event_id, 10) || 0), 0);
       if (maxId > 0) {
         await this._saveStoredId(LAST_EVENT_ID_KEY, maxId);
-        console.log('[AlertService] Custom events first run — synced to ID', maxId);
+        console.log('[AlertService] Custom events first install run — synced to ID', maxId);
       }
       this._firstCustomEventSync = false;
       return;
@@ -206,9 +206,9 @@ class AlertNotificationService {
       const evId = parseInt(ev.event_id, 10);
       if (evId > maxNewId) maxNewId = evId;
 
-      // Skip if older than 3 minutes (allows for normal GPS transmission delay)
+      // Skip if older than 12 hours (allows for normal GPS transmission delay, offline devices, or background wakeup gaps)
       const evTimeMs = ev.event_time ? new Date(ev.event_time).getTime() : nowMs;
-      if (nowMs - evTimeMs > 3 * 60 * 1000) continue;
+      if (nowMs - evTimeMs > 12 * 60 * 60 * 1000) continue;
 
       const rawType = String(ev.event_type || '').trim();
       const typeKey = this._normaliseEventType(rawType);
@@ -300,11 +300,11 @@ class AlertNotificationService {
     let maxNewId = lastId;
 
     // ── FIRST RUN ────────────────────────────────────────────────────────────
-    if (lastId === 0 || this._firstAlarmSync) {
+    if (lastId === 0) {
       const maxId = alarms.reduce((m, a) => Math.max(m, parseInt(a.id, 10) || 0), 0);
       if (maxId > 0) {
         await this._saveStoredId(LAST_ALARM_ID_KEY, maxId);
-        console.log('[AlertService] Alarms first run — synced to ID', maxId);
+        console.log('[AlertService] Alarms first install run — synced to ID', maxId);
       }
       this._firstAlarmSync = false;
       return;
@@ -322,10 +322,10 @@ class AlertNotificationService {
       const alarmId = parseInt(alarm.id, 10);
       if (alarmId > maxNewId) maxNewId = alarmId;
 
-      // Skip stale alarms (older than 3 minutes)
+      // Skip stale alarms (older than 12 hours)
       const evTimeStr = alarm.eventtime || alarm.serverTime;
       const evTimeMs = evTimeStr ? new Date(evTimeStr).getTime() : nowMs;
-      if (nowMs - evTimeMs > 3 * 60 * 1000) continue;
+      if (nowMs - evTimeMs > 12 * 60 * 60 * 1000) continue;
 
       const deviceId = alarm.deviceid ?? alarm.deviceId;
       const deviceName = this._getDeviceName(deviceId, alarm.device_name);

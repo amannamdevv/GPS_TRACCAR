@@ -6,34 +6,8 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
-import axios from 'axios';
+import { loginApi } from '../api/webApi';
 
-const loginApi = async (serverUrl, email, password) => {
-  try {
-    const response = await axios.post('http://gps.shrotitele.com/api/login/', {
-      login_id: email,
-      password: password
-    }, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (response.data && response.data.status) {
-      const u = response.data.user;
-      return { 
-        id: u.aid, 
-        name: u.fullname, 
-        email: email, 
-        ...u 
-      };
-    } else {
-      throw new Error(response.data?.message || 'Invalid Login ID or Password');
-    }
-  } catch (error) {
-    throw new Error(error.response?.data?.message || error.message || 'Login failed. Check credentials or server.');
-  }
-};
 const logoutApi = async () => {};
 const apiRestoreSession = async () => {
   return { id: 1, name: 'Gourav Admin' };

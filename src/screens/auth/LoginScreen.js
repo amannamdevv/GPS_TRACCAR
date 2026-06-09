@@ -21,7 +21,7 @@ import {
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AuthContext } from '../../context/AuthContext';
 
-const DEFAULT_SERVER = 'http://gps.shrotitele.com/';
+const DEFAULT_SERVER = 'https://gps.shrotitele.com/';
 
 const LoginScreen = ({ navigation }) => {
   const [serverUrl, setServerUrl] = useState(DEFAULT_SERVER);
@@ -61,7 +61,7 @@ const LoginScreen = ({ navigation }) => {
               resizeMode="contain"
             />
           </View>
-          <Text style={styles.title}>STPL GPS</Text>
+          <Text style={styles.title}>STPL GPS Tracker</Text>
           <Text style={styles.subtitle}>Real-time GPS Tracking</Text>
         </View>
 

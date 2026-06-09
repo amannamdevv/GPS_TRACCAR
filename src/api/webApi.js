@@ -1,7 +1,9 @@
+// webApi.js
+
 import axios from 'axios';
 import moment from 'moment';
 
-const BASE_URL = 'http://gps.shrotitele.com:1061/api';
+const BASE_URL = 'https://gps.shrotitele.com/api';
 
 const webApi = axios.create({
   baseURL: BASE_URL,
@@ -60,7 +62,7 @@ const normalizeDeviceData = (rawData) => {
 
     let status = 'offline';
     if (dev.status === 'online' || dev.status === 1 || dev.status === '1' ||
-        dev.device_status === 'online' || dev.device_status === 1 || dev.device_status === '1') {
+      dev.device_status === 'online' || dev.device_status === 1 || dev.device_status === '1') {
       status = 'online';
     } else if (position_time) {
       const diff = Date.now() - new Date(position_time).getTime();
@@ -104,8 +106,51 @@ const normalizeDeviceData = (rawData) => {
 // ─── fetchDeviceList ──────────────────────────────────────────────────────────
 export const fetchDeviceList = async () => {
   try {
-    const response = await getWithRetry('/dg_device_latest_json/');
-    return normalizeDeviceData(response.data);
+    const [latestResp, allResp] = await Promise.allSettled([
+      getWithRetry('/dg_device_latest_json/'),
+      getWithRetry('/devices')
+    ]);
+
+    let latestData = [];
+    if (latestResp.status === 'fulfilled' && latestResp.value?.data) {
+      const raw = latestResp.value.data;
+      if (Array.isArray(raw)) latestData = raw;
+      else if (Array.isArray(raw.data)) latestData = raw.data;
+      else if (Array.isArray(raw.devices)) latestData = raw.devices;
+      else if (typeof raw === 'object') latestData = Object.values(raw);
+    } else if (latestResp.status === 'rejected') {
+      throw latestResp.reason;
+    }
+
+    let allDevices = [];
+    if (allResp.status === 'fulfilled' && allResp.value?.data) {
+      const raw = allResp.value.data;
+      if (Array.isArray(raw)) allDevices = raw;
+      else if (Array.isArray(raw.data)) allDevices = raw.data;
+      else if (Array.isArray(raw.devices)) allDevices = raw.devices;
+      else if (typeof raw === 'object') allDevices = Object.values(raw);
+    }
+
+    const map = new Map();
+    // 1. Add all standard devices (which includes 'unknown' status devices)
+    allDevices.forEach(d => {
+      const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
+      if (id != null) {
+        map.set(String(id), { ...d });
+      }
+    });
+
+    // 2. Override with the custom latest position data (richer attributes)
+    latestData.forEach(d => {
+      const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
+      if (id != null) {
+        const existing = map.get(String(id)) || {};
+        map.set(String(id), { ...existing, ...d });
+      }
+    });
+
+    const mergedArray = Array.from(map.values());
+    return normalizeDeviceData(mergedArray);
   } catch (error) {
     console.error('[webApi] Error fetching device list:', error);
     throw new Error(error.response?.data?.message || 'Failed to fetch live devices from server.');
@@ -113,14 +158,10 @@ export const fetchDeviceList = async () => {
 };
 
 // ─── fetchCustomEvents ────────────────────────────────────────────────────────
-// Returns: ignitionOn, ignitionOff, deviceMoving, deviceStopped  — with address & event_time
-// Fields per item: event_id, deviceid, device_name, event_type, event_value,
-//                  latitude, longitude, event_time, created_at, address
 export const fetchCustomEvents = async () => {
   try {
     const response = await webApi.get('/custom_events_with_address_api/');
     const raw = response.data;
-    // API returns { status, count, data: [...] }
     if (raw && Array.isArray(raw.data)) return raw.data;
     if (Array.isArray(raw)) return raw;
     return [];
@@ -133,7 +174,6 @@ export const fetchCustomEvents = async () => {
 };
 
 // ─── fetchAlarms ─────────────────────────────────────────────────────────────
-// Returns: powerCut, lowBattery, vibration  (and any other alarm types)
 export const fetchAlarms = async (deviceId) => {
   try {
     const url = deviceId ? `/alaram/${deviceId}/` : '/alaram/';
@@ -154,21 +194,41 @@ export const fetchDgStatusLogs = async (params = {}) => {
 
     const raw = response.data;
 
-    // Backend { status: true, data: [...] } ya direct array return kar sakta hai
     if (raw && Array.isArray(raw.data)) return raw.data;
     if (raw && Array.isArray(raw.results)) return raw.results;
     if (Array.isArray(raw)) return raw;
 
-    // Kuch aur structure hai — console mein dekho
     console.warn('[webApi] fetchDgStatusLogs unexpected response:', raw);
     return [];
-
   } catch (e) {
     console.error('[webApi] Failed to fetch DG status logs:', e.message);
     throw e;
   }
 };
 
+// ─── NEW: fetchPositionHistory (for playback) ─────────────────────────────────
+// Uses the positions_view endpoint.
+// Expects parameters: deviceid, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD)
+// Returns an array of position objects [{ latitude, longitude, speed, course, fixtime, ... }]
+export const fetchPositionHistory = async (deviceId, startDate, endDate) => {
+  try {
+    const response = await webApi.get('/positions_view/', {
+      params: {
+        deviceid: deviceId,
+        start_date: startDate,
+        end_date: endDate,
+      },
+    });
+    const raw = response.data; // { status: true, count, filters, data: [...] }
+    if (raw && Array.isArray(raw.data)) {
+      return raw.data;
+    }
+    return [];
+  } catch (e) {
+    console.warn('[webApi] Failed to fetch position history:', e.message);
+    return [];
+  }
+};
 
 // ─── reverseGeocode ───────────────────────────────────────────────────────────
 const addressCache = {};
@@ -240,6 +300,71 @@ export const reverseGeocode = async (lat, lon) => {
       await delay(1100);
     });
   });
+};
+
+// ─── loginApi ────────────────────────────────────────────────────────────────
+export const loginApi = async (serverUrl, email, password) => {
+  try {
+    const response = await webApi.post('/login/', {
+      login_id: email,
+      password: password
+    }, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response.data && response.data.status) {
+      const u = response.data.user;
+      return { 
+        id: u.aid, 
+        name: u.fullname, 
+        email: email, 
+        ...u 
+      };
+    } else {
+      throw new Error(response.data?.message || 'Invalid Login ID or Password');
+    }
+  } catch (error) {
+    throw new Error(error.response?.data?.message || error.message || 'Login failed. Check credentials or server.');
+  }
+};
+
+// ─── getTripsReport ──────────────────────────────────────────────────────────
+export const getTripsReport = async (deviceId, from, to) => {
+  try {
+    const resp = await webApi.get('/dg_merged_status_api/', {
+      params: { deviceid: deviceId, deviceId, from, to },
+      timeout: 20000,
+    });
+    const raw = resp.data;
+    let all = [];
+    if (Array.isArray(raw)) all = raw;
+    else if (raw && Array.isArray(raw.data)) all = raw.data;
+    else if (raw && Array.isArray(raw.results)) all = raw.results;
+
+    const filtered = all.filter(t => {
+      const tid = t.deviceid ?? t.deviceId ?? t.device_id;
+      return !tid || String(tid) === String(deviceId);
+    });
+    
+    return filtered.map(t => ({
+      startTime: t.start_time ?? t.position_time,
+      endTime: t.end_time ?? t.position_time,
+      duration: (parseFloat(t.total_duration_minutes ?? t.duration_minutes ?? 0)) * 60,
+      distance: (parseFloat(t.covered_distance_km ?? 0)) * 1000,
+      startLat: parseFloat(t.start_latitude ?? t.latitude ?? 0),
+      startLon: parseFloat(t.start_longitude ?? t.longitude ?? 0),
+      endLat: parseFloat(t.end_latitude ?? t.latitude ?? 0),
+      endLon: parseFloat(t.end_longitude ?? t.longitude ?? 0),
+      startAddress: t.start_address || null,
+      endAddress: t.end_address || null,
+      status: String(t.final_status || t.motion_status || 'UNKNOWN').toUpperCase()
+    })).filter(t => t.status === 'MOVE' || t.status === 'MOVING');
+  } catch (e) {
+    console.warn('[getTripsReport]', e.message);
+    return [];
+  }
 };
 
 export default webApi;

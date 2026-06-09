@@ -15,46 +15,8 @@ import DatePicker from 'react-native-date-picker';
 import { WebView } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Header from '../../components/Header';
-import { fetchDeviceList, fetchDgStatusLogs } from '../../api/webApi';
+import { fetchDeviceList, fetchDgStatusLogs, getTripsReport, reverseGeocode } from '../../api/webApi';
 import moment from 'moment';
-import axios from 'axios';
-const BASE_URL = 'http://gps.shrotitele.com:1061/api';
-
-const getTripsReport = async (deviceId, from, to) => {
-  try {
-    const resp = await axios.get(`${BASE_URL}/dg_merged_status_api/`, {
-      params: { deviceid: deviceId, deviceId, from, to },
-      timeout: 20000,
-    });
-    const raw = resp.data;
-    let all = [];
-    if (Array.isArray(raw)) all = raw;
-    else if (raw && Array.isArray(raw.data)) all = raw.data;
-    else if (raw && Array.isArray(raw.results)) all = raw.results;
-
-    const filtered = all.filter(t => {
-      const tid = t.deviceid ?? t.deviceId ?? t.device_id;
-      return !tid || String(tid) === String(deviceId);
-    });
-    
-    return filtered.map(t => ({
-      startTime: t.start_time ?? t.position_time,
-      endTime: t.end_time ?? t.position_time,
-      duration: (parseFloat(t.total_duration_minutes ?? t.duration_minutes ?? 0)) * 60,
-      distance: (parseFloat(t.covered_distance_km ?? 0)) * 1000,
-      startLat: parseFloat(t.start_latitude ?? t.latitude ?? 0),
-      startLon: parseFloat(t.start_longitude ?? t.longitude ?? 0),
-      endLat: parseFloat(t.end_latitude ?? t.latitude ?? 0),
-      endLon: parseFloat(t.end_longitude ?? t.longitude ?? 0),
-      startAddress: t.start_address || null,
-      endAddress: t.end_address || null,
-      status: String(t.final_status || t.motion_status || 'UNKNOWN').toUpperCase()
-    })).filter(t => t.status === 'MOVE' || t.status === 'MOVING');
-  } catch (e) {
-    console.warn('[getTripsReport]', e.message);
-    return [];
-  }
-};
 
 const getPositions = async () => [];
 

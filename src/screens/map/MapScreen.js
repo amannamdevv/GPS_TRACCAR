@@ -351,17 +351,60 @@ const focusNearestDevice = (positionsArray) => {
       }
     },
     (err) => {
-      console.warn('Geolocation error', err);
+      // Retrying with standard accuracy on timeout/failure
+      Geolocation.getCurrentPosition(
+        (loc) => {
+          const { latitude: myLat, longitude: myLon } = loc.coords;
+          let nearest = null;
+          let minDist = Infinity;
+          positionsArray.forEach((p) => {
+            if (!p.latitude || !p.longitude) return;
+            const d = haversine(myLat, myLon, p.latitude, p.longitude);
+            if (d < minDist) {
+              minDist = d;
+              nearest = p;
+            }
+          });
+          if (nearest) {
+            sendToMap('FOCUS_DEVICE', { lat: nearest.latitude, lng: nearest.longitude });
+          }
+        },
+        (err2) => {
+          console.log('[Geolocation] Standard accuracy also failed:', err2.message);
+        },
+        { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+      );
     },
-    { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
+    { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 }
   );
 };
 
-  useEffect(() => {
-    notifee.requestPermission();
-    const unsubNet = NetInfo.addEventListener(state => setIsOnline(state.isConnected));
-    return () => { unsubNet(); };
-  }, []);
+useEffect(() => {
+  const requestNotifPermission = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        if (Platform.Version >= 33) {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+            {
+              title: 'Notification Permission',
+              message: 'Vehicle alerts ke liye notification allow karo',
+              buttonPositive: 'Allow',
+              buttonNegative: 'Deny',
+            }
+          );
+        }
+        await notifee.requestPermission().catch(() => {});
+      }
+    } catch (e) {
+      console.log('Permission error:', e);
+    }
+  };
+  requestNotifPermission();
+
+  const unsubNet = NetInfo.addEventListener(state => setIsOnline(state.isConnected));
+  return () => { unsubNet(); };
+}, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -448,8 +491,22 @@ const focusNearestDevice = (positionsArray) => {
           noPan: !fitAll
         });
       },
-      () => {},
-      { enableHighAccuracy: true, timeout: 15000 }
+      () => {
+        // Fallback to standard accuracy
+        Geolocation.getCurrentPosition(
+          position => {
+            sendToMap('LOCATE_ME_NATIVE', {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+              fitAll: fitAll,
+              noPan: !fitAll
+            });
+          },
+          () => {},
+          { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
     );
   }, [sendToMap]);
 
@@ -462,8 +519,20 @@ const focusNearestDevice = (positionsArray) => {
           lng: position.coords.longitude
         });
       },
-      error => Alert.alert('Location Error', 'GPS might be disabled.'),
-      { enableHighAccuracy: true, timeout: 15000 }
+      error => {
+        // Fallback to standard accuracy
+        Geolocation.getCurrentPosition(
+          position => {
+            sendToMap('LOCATE_ME_NATIVE', {
+              lat: position.coords.latitude,
+              lng: position.coords.longitude
+            });
+          },
+          err => Alert.alert('Location Error', 'GPS might be disabled.'),
+          { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 }
     );
   };
 

@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import Svg, { Path, G, Text as SvgText, Circle, Defs, ClipPath, Rect } from 'react-native-svg';
+import Svg, { Path, G, Text as SvgText, Circle, Defs, ClipPath, Rect, Polyline, Line } from 'react-native-svg';
 import Header from '../../components/Header';
 import DeviceCard from '../../components/DeviceCard';
 import { fetchDeviceList } from '../../api/webApi';
@@ -193,6 +193,79 @@ const DonutChart = ({ total, dataEntries, title, activeFilter, onFilterSelect })
       </View>
 
       <Text style={styles.bigChartHint}>Tap a segment to filter devices below</Text>
+    </View>
+  );
+};
+
+// ─── TREND LINE CHART (WEEKLY TREND) ─────────────────────────────────────────
+const TrendLineChart = () => {
+  const chartWidth = width - 40; // padding horizontal 20
+  const chartHeight = 160;
+  const paddingTop = 20;
+  const paddingBottom = 30;
+  const paddingHorizontal = 10;
+  const innerWidth = chartWidth - paddingHorizontal * 2;
+  const innerHeight = chartHeight - paddingTop - paddingBottom;
+  
+  // Weekly Dummy Data for presentation as requested
+  const data = [
+    { day: 'Mon', m: 45, i: 30 },
+    { day: 'Tue', m: 52, i: 35 },
+    { day: 'Wed', m: 48, i: 40 },
+    { day: 'Thu', m: 65, i: 55 },
+    { day: 'Fri', m: 58, i: 45 },
+    { day: 'Sat', m: 75, i: 60 },
+    { day: 'Sun', m: 68, i: 58 },
+  ];
+  
+  const maxVal = 100;
+  
+  const getX = (index) => paddingHorizontal + (index * (innerWidth / (data.length - 1)));
+  const getY = (val) => paddingTop + innerHeight - ((val / maxVal) * innerHeight);
+  
+  const motionPoints = data.map((d, i) => `${getX(i)},${getY(d.m)}`).join(' ');
+  const ignitionPoints = data.map((d, i) => `${getX(i)},${getY(d.i)}`).join(' ');
+
+  return (
+    <View style={styles.lineChartCard}>
+      <View style={styles.lineChartHeader}>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Icon name="chart-line-variant" size={15} color="#64748b" style={{ marginRight: 6 }} />
+          <Text style={styles.lineChartTitle}>Weekly Activity Trend</Text>
+        </View>
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981' }} />
+            <Text style={{ fontSize: 10, color: '#64748b', fontWeight: '600' }}>Motion</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' }} />
+            <Text style={{ fontSize: 10, color: '#64748b', fontWeight: '600' }}>Ignition</Text>
+          </View>
+        </View>
+      </View>
+
+      <View style={{ alignItems: 'center', marginTop: 10 }}>
+        <Svg width={chartWidth} height={chartHeight}>
+          {/* Grid lines */}
+          {[0, 0.5, 1].map(r => (
+            <Line key={r} x1={paddingHorizontal} y1={paddingTop + innerHeight * r} x2={chartWidth - paddingHorizontal} y2={paddingTop + innerHeight * r} stroke="#f1f5f9" strokeWidth="1.5" strokeDasharray="4 4" />
+          ))}
+          
+          {/* Paths */}
+          <Polyline points={motionPoints} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          <Polyline points={ignitionPoints} fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          
+          {/* Data Points */}
+          {data.map((d, i) => (
+            <React.Fragment key={i}>
+              <Circle cx={getX(i)} cy={getY(d.m)} r="3.5" fill="#10b981" stroke="#fff" strokeWidth="1.5" />
+              <Circle cx={getX(i)} cy={getY(d.i)} r="3.5" fill="#f59e0b" stroke="#fff" strokeWidth="1.5" />
+              <SvgText x={getX(i)} y={chartHeight - 10} fontSize="10" fill="#94a3b8" fontWeight="600" textAnchor="middle">{d.day}</SvgText>
+            </React.Fragment>
+          ))}
+        </Svg>
+      </View>
     </View>
   );
 };
@@ -403,6 +476,11 @@ const DashboardScreen = ({ navigation }) => {
           onFilterSelect={handleSecondaryFilter}
           dataEntries={chartEntries}
         />
+      )}
+      
+      {/* ── Line Chart ── */}
+      {primaryFilter !== 'offline' && (
+        <TrendLineChart />
       )}
       
       {primaryFilter === 'online' && (
@@ -669,7 +747,36 @@ const styles = StyleSheet.create({
     color: '#94a3b8',
     textAlign: 'center',
     marginTop: 10,
-    fontStyle: 'italic',
+    marginBottom: 6,
+  },
+
+  // Line Chart
+  lineChartCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginBottom: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#f1f5f9',
+  },
+  lineChartHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  lineChartTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#334155',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 
   // Table header

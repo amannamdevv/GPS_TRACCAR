@@ -52,7 +52,7 @@ const SettingsScreen = ({ navigation }) => {
 
         <SectionHeader title="WEBSITE" />
         <View style={styles.card}>
-          <TouchableOpacity onPress={() => Linking.openURL('http://gps.shrotitele.com/')}>
+          <TouchableOpacity onPress={() => Linking.openURL('https://gps.shrotitele.com/')}>
             <SettingRow 
               icon="web" 
               title="Website Link" 

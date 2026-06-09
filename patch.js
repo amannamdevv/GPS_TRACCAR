@@ -8,7 +8,7 @@ content = content.replace('  StatusBar,\n  Linking,\n} from \\'react-native\\';'
 content = content.replace('import moment from \\'moment\\';', 'import moment from \\'moment\\';\nimport DatePicker from \\'react-native-date-picker\\';');
 
 // 2. Add BASE_URL and fmt
-content = content.replace('const BASE_URL = \\'http://gps.shrotitele.com:1061/api\\';', 'const BASE_URL = \\'http://gps.shrotitele.com:1061/api\\';\nconst { width } = Dimensions.get(\\'window\\');\nconst fmt = (m) => m.format(\\'YYYY-MM-DD HH:mm:ss\\');');
+content = content.replace('const BASE_URL = \\'https://gps.shrotitele.com/api\\';', 'const BASE_URL = \\'https://gps.shrotitele.com/api\\';\nconst { width } = Dimensions.get(\\'window\\');\nconst fmt = (m) => m.format(\\'YYYY-MM-DD HH:mm:ss\\');');
 
 // 3. Add States
 const stateCode = `
