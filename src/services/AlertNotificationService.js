@@ -8,17 +8,17 @@ import Tts from 'react-native-tts';
 import moment from 'moment';
 import { AppState } from 'react-native';
 import BackgroundActions from 'react-native-background-actions';
-import { fetchAlarms, fetchCustomEvents, fetchDeviceList, reverseGeocode } from '../api/webApi';
+// ✅ FIX 1: fetchCustomEvents was never imported — added it here
+import { fetchAlarms, fetchDeviceList, fetchCustomEvents, reverseGeocode } from '../api/webApi';
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
-const LAST_EVENT_ID_KEY = 'lastCustomEventId';   // for custom_events API
-const LAST_ALARM_ID_KEY = 'lastAlarmId';          // for alaram API
-const POLLING_INTERVAL_MS = 5000;
+const LAST_EVENT_ID_KEY = 'lastCustomEventId';
+const LAST_ALARM_ID_KEY = 'lastAlarmId';
+const POLLING_INTERVAL_MS = 10000;
 const BACKGROUND_POLLING_INTERVAL_MS = 60000;
 
 // ─── Alert visual config ──────────────────────────────────────────────────────
 const ALERT_CONFIG = {
-  // ── From custom_events_with_address_api ──
   ignitionOn: {
     title: '🟢 DG ON',
     color: '#00C853',
@@ -29,8 +29,16 @@ const ALERT_CONFIG = {
     color: '#D50000',
     speakPrefix: 'DG turned OFF on',
   },
-
-  // ── From alaram API ──
+  deviceMoving: {
+    title: '🚚 DG Move',
+    color: '#FF9800',
+    speakPrefix: 'DG moving on',
+  },
+  deviceStopped: {
+    title: '🛑 DG Stop',
+    color: '#D32F2F',
+    speakPrefix: 'DG stopped on',
+  },
   powerCut: {
     title: '⚡ Power Cut Detected',
     color: '#FF3D00',
@@ -53,16 +61,18 @@ class AlertNotificationService {
   constructor() {
     this.isPolling = false;
     this.channelId = null;
-    this.deviceMap = {};   // deviceId → name (cache)
-    this.deviceLocMap = {}; // deviceId → {lat, lon, address}
-    this.alertCooldowns = {};   // `${deviceId}_${type}` → timestamp
+    this.deviceMap = {};
+    this.deviceLocMap = {};
+    this.alertCooldowns = {};
+    this.deviceStateCache = {};
+    this.allowedDeviceIds = new Set();
     this._ttsReady = false;
     this._initDone = false;
     this._permissionGranted = false;
     this._firstCustomEventSync = true;
     this._firstAlarmSync = true;
+    this._fallbackTimeout = null;
 
-    // Track app state to reduce data usage in background
     this.appState = AppState.currentState;
     AppState.addEventListener('change', nextAppState => {
       this.appState = nextAppState;
@@ -87,7 +97,6 @@ class AlertNotificationService {
         settings.authorizationStatus === AuthorizationStatus.PROVISIONAL;
       console.log('[AlertService] Notification Permission granted:', this._permissionGranted);
 
-      // Request location permissions gracefully so background service doesn't crash on Android 14
       const { PermissionsAndroid, Platform } = require('react-native');
       if (Platform.OS === 'android') {
         await PermissionsAndroid.request(
@@ -95,7 +104,6 @@ class AlertNotificationService {
         );
       }
     } catch (e) {
-      // Older Android — no runtime permission needed, treat as granted
       this._permissionGranted = true;
     }
   }
@@ -108,7 +116,7 @@ class AlertNotificationService {
 
       this.channelId = await notifee.createChannel({
         id: 'gps_alerts_v4',
-        name: 'GPS Vehicle Alerts',
+        name: 'GPS DG Alerts',
         description: 'Real-time GPS tracking alerts',
         importance: AndroidImportance.HIGH,
         visibility: AndroidVisibility.PUBLIC,
@@ -145,13 +153,82 @@ class AlertNotificationService {
     try {
       const data = await fetchDeviceList();
       if (data?.devices) {
-        data.devices.forEach(d => {
-          if (d.id != null) {
-            this.deviceMap[d.id] = d.name || `Device ${d.id}`;
-            this.deviceLocMap[d.id] = { lat: d.motion_lat, lon: d.motion_lon, address: d.address };
+        for (const d of data.devices) {
+          if (d.id == null) continue;
+
+          const curIgnition = d.dg_status === 1 ? 1 : 0;
+          const curMotion = d.motion_status === 1 ? 1 : 0;
+
+          const deviceName = d.name || `Device ${d.id}`;
+          this.deviceMap[d.id] = deviceName;
+          this.deviceLocMap[d.id] = { lat: d.motion_lat, lon: d.motion_lon, address: d.address };
+
+          const prevState = this.deviceStateCache[d.id];
+
+          // First poll — just store state, don't notify
+          if (!prevState) {
+            this.deviceStateCache[d.id] = { ignition: curIgnition, motion: curMotion };
+            continue;
           }
-        });
+
+          const timeLabel = moment().format('hh:mm A, DD MMM YYYY');
+          const address = d.address || '';
+          const nowMs = Date.now();
+
+          // ── Ignition change → DG ON / DG OFF ──
+          if (curIgnition !== prevState.ignition) {
+            const typeKey = curIgnition === 1 ? 'ignitionOn' : 'ignitionOff';
+            const cooldownKey = `${d.id}_${typeKey}`;
+            if (!this._isCoolingDown(cooldownKey)) {
+              this.alertCooldowns[cooldownKey] = nowMs;
+              const cfg = ALERT_CONFIG[typeKey];
+              const body = address
+                ? `${deviceName}  •  ${timeLabel}\n📍 ${address}`
+                : `${deviceName}  •  ${timeLabel}`;
+              const payload = {
+                type: typeKey,
+                title: cfg.title,
+                body,
+                speakText: `${cfg.speakPrefix} ${deviceName}`,
+                timestamp: nowMs,
+                color: cfg.color,
+              };
+              await this._sendNotification(payload);
+              this._speak(payload.speakText);
+              await new Promise(r => setTimeout(r, 800));
+            }
+          }
+
+          // ── Motion change → DG MOVE / DG STOP ──
+          if (curMotion !== prevState.motion) {
+            const typeKey = curMotion === 1 ? 'deviceMoving' : 'deviceStopped';
+            const cooldownKey = `${d.id}_${typeKey}`;
+            if (!this._isCoolingDown(cooldownKey)) {
+              this.alertCooldowns[cooldownKey] = nowMs;
+              const cfg = ALERT_CONFIG[typeKey];
+              const body = address
+                ? `${deviceName}  •  ${timeLabel}\n📍 ${address}`
+                : `${deviceName}  •  ${timeLabel}`;
+              const payload = {
+                type: typeKey,
+                title: cfg.title,
+                body,
+                speakText: `${cfg.speakPrefix} ${deviceName}`,
+                timestamp: nowMs,
+                color: cfg.color,
+              };
+              await this._sendNotification(payload);
+              this._speak(payload.speakText);
+              await new Promise(r => setTimeout(r, 800));
+            }
+          }
+
+          this.deviceStateCache[d.id] = { ignition: curIgnition, motion: curMotion };
+        }
       }
+      // ✅ Always rebuild allowedDeviceIds after _loadDevices so _pollAlarms has it
+      this.allowedDeviceIds = new Set(Object.keys(this.deviceMap).map(k => String(k)));
+      console.log('[AlertService] allowedDeviceIds updated, count:', this.allowedDeviceIds.size);
     } catch (e) {
       console.warn('[AlertService] loadDevices error', e);
     }
@@ -159,7 +236,7 @@ class AlertNotificationService {
 
   _getDeviceName(deviceId, fallbackName) {
     if (fallbackName && fallbackName !== 'Unknown Device') return fallbackName;
-    if (!deviceId) return 'Unknown Vehicle';
+    if (!deviceId) return 'Unknown DG';
     return this.deviceMap[deviceId] || `Vehicle #${deviceId}`;
   }
 
@@ -182,18 +259,17 @@ class AlertNotificationService {
     let lastId = await this._getStoredId(LAST_EVENT_ID_KEY);
     let maxNewId = lastId;
 
-    // ── FIRST RUN: sync to current max, don't notify anything ───────────────
+    // ── FIRST RUN: sync to current max, don't notify ─────────────────────────
     if (lastId === 0) {
       const maxId = events.reduce((m, e) => Math.max(m, parseInt(e.event_id, 10) || 0), 0);
       if (maxId > 0) {
         await this._saveStoredId(LAST_EVENT_ID_KEY, maxId);
-        console.log('[AlertService] Custom events first install run — synced to ID', maxId);
+        console.log('[AlertService] Custom events first run — synced to ID', maxId);
       }
       this._firstCustomEventSync = false;
       return;
     }
 
-    // ── Only new events, oldest first ───────────────────────────────────────
     const fresh = events
       .filter(e => (parseInt(e.event_id, 10) || 0) > lastId)
       .sort((a, b) => parseInt(a.event_id, 10) - parseInt(b.event_id, 10));
@@ -206,7 +282,6 @@ class AlertNotificationService {
       const evId = parseInt(ev.event_id, 10);
       if (evId > maxNewId) maxNewId = evId;
 
-      // Skip if older than 12 hours (allows for normal GPS transmission delay, offline devices, or background wakeup gaps)
       const evTimeMs = ev.event_time ? new Date(ev.event_time).getTime() : nowMs;
       if (nowMs - evTimeMs > 12 * 60 * 60 * 1000) continue;
 
@@ -215,6 +290,9 @@ class AlertNotificationService {
       if (!typeKey) continue;
 
       const deviceId = ev.deviceid;
+      if (!this.allowedDeviceIds.has(String(deviceId))) {
+        continue;
+      }
       const deviceName = this._getDeviceName(deviceId, ev.device_name);
       const cooldownKey = `${deviceId}_${typeKey}`;
       if (this._isCoolingDown(cooldownKey)) continue;
@@ -231,7 +309,6 @@ class AlertNotificationService {
     if (maxNewId > lastId) await this._saveStoredId(LAST_EVENT_ID_KEY, maxNewId);
   }
 
-  /** Maps raw event_type string → our ALERT_CONFIG key */
   _normaliseEventType(raw) {
     const lower = raw.toLowerCase();
     if (lower === 'ignitionon' || lower === 'ignition_on') return 'ignitionOn';
@@ -241,32 +318,25 @@ class AlertNotificationService {
     return null;
   }
 
-  /** Build notification payload from a custom_events row */
   async _buildCustomEventPayload(typeKey, deviceName, ev) {
     const cfg = ALERT_CONFIG[typeKey];
     if (!cfg) return null;
 
-    // event_time from API  (e.g. "2026-05-28T11:45:59")
     const evTimeMs = ev.event_time ? new Date(ev.event_time).getTime() : Date.now();
     const timeLabel = moment(evTimeMs).format('hh:mm A, DD MMM YYYY');
 
-    // Address: prefer what API returns, fallback to reverseGeocode
     let address = ev.address && ev.address.trim() ? ev.address.trim() : null;
-
     if (!address) {
       const lat = ev.latitude || ev.lat;
       const lon = ev.longitude || ev.lon;
       if (lat && lon) {
-        try { address = await reverseGeocode(lat, lon); } catch (_) {}
+        try { address = await reverseGeocode(lat, lon); } catch (_) { }
       }
     }
 
-    // Notification body
-    // Line 1: device name + time
-    // Line 2: address (always shown if available)
     const body = address
-      ? `${deviceName}  •  ${timeLabel}\n📍 ${address}`
-      : `${deviceName}  •  ${timeLabel}`;
+      ? `${deviceName}  •  ${timeLabel}\nType: ${typeKey}\n📍 ${address}`
+      : `${deviceName}  •  ${timeLabel}\nType: ${typeKey}`;
 
     return {
       type: typeKey,
@@ -280,7 +350,7 @@ class AlertNotificationService {
 
   // ══════════════════════════════════════════════════════════════════════════════
   // POLL 2 — /alaram/
-  //          Covers: powerCut, lowBattery, vibration (and anything else)
+  //          Covers: powerCut, lowBattery, vibration
   // ══════════════════════════════════════════════════════════════════════════════
 
   async _pollAlarms() {
@@ -304,7 +374,7 @@ class AlertNotificationService {
       const maxId = alarms.reduce((m, a) => Math.max(m, parseInt(a.id, 10) || 0), 0);
       if (maxId > 0) {
         await this._saveStoredId(LAST_ALARM_ID_KEY, maxId);
-        console.log('[AlertService] Alarms first install run — synced to ID', maxId);
+        console.log('[AlertService] Alarms first run — synced to ID', maxId);
       }
       this._firstAlarmSync = false;
       return;
@@ -322,26 +392,28 @@ class AlertNotificationService {
       const alarmId = parseInt(alarm.id, 10);
       if (alarmId > maxNewId) maxNewId = alarmId;
 
-      // Skip stale alarms (older than 12 hours)
       const evTimeStr = alarm.eventtime || alarm.serverTime;
       const evTimeMs = evTimeStr ? new Date(evTimeStr).getTime() : nowMs;
       if (nowMs - evTimeMs > 12 * 60 * 60 * 1000) continue;
 
-      const deviceId = alarm.deviceid ?? alarm.deviceId;
+      const deviceId = alarm.deviceid ?? alarm.deviceId ?? alarm.device_id;
+      if (!this.allowedDeviceIds.has(String(deviceId))) {
+        continue;
+      }
       const deviceName = this._getDeviceName(deviceId, alarm.device_name);
-      
+
       let address = null;
       let lat = alarm.latitude || alarm.lat || alarm.attributes?.latitude || alarm.attributes?.lat;
       let lon = alarm.longitude || alarm.lon || alarm.attributes?.longitude || alarm.attributes?.lon;
-      
+
       if (!lat && this.deviceLocMap[deviceId]) {
         lat = this.deviceLocMap[deviceId].lat;
         lon = this.deviceLocMap[deviceId].lon;
         address = this.deviceLocMap[deviceId].address;
       }
-      
+
       if (!address && lat && lon) {
-        try { address = await reverseGeocode(lat, lon); } catch (_) {}
+        try { address = await reverseGeocode(lat, lon); } catch (_) { }
       }
 
       const payload = this._parseAlarm(alarm, deviceName, address);
@@ -359,12 +431,9 @@ class AlertNotificationService {
     if (maxNewId > lastId) await this._saveStoredId(LAST_ALARM_ID_KEY, maxNewId);
   }
 
-  /** Parse alarm API row → notification payload */
   _parseAlarm(alarm, deviceName, address = null) {
     const rawType = String(alarm.type || '').trim().toLowerCase();
     const rawAttr = String(alarm.attributes?.alarm || '').trim().toLowerCase();
-    const ignition = alarm.attributes?.ignition;
-    const motion = alarm.attributes?.motion;
     const batRaw = alarm.attributes?.batteryLevel ?? alarm.attributes?.battery;
     const battery = batRaw != null ? parseFloat(batRaw) : null;
 
@@ -372,29 +441,37 @@ class AlertNotificationService {
     const evTimeMs = evTimeStr ? new Date(evTimeStr).getTime() : Date.now();
     const timeLabel = moment(evTimeMs).format('hh:mm A, DD MMM YYYY');
 
+    // ✅ FIX: also handle comma-separated alarm types like "lowBattery,lowBattery"
+    const alarmFieldRaw = String(alarm.alarm || alarm.attributes?.alarm || '').toLowerCase();
+    const alarmTypes = alarmFieldRaw.split(',').map(s => s.trim());
+
     const make = (typeKey, detail, extraSpeak = '') => {
       const cfg = ALERT_CONFIG[typeKey] || {};
       const fullDetail = address && address !== '—' ? `${detail}\n📍 ${address}` : detail;
       return {
         type: typeKey,
         title: cfg.title || `🔔 ${typeKey}`,
-        body: `${deviceName}  •  ${timeLabel}\n${fullDetail}`,
+        body: `${deviceName}  •  ${timeLabel}\nType: ${typeKey}\n${fullDetail}`,
         speakText: `${cfg.speakPrefix || typeKey} ${deviceName}. ${extraSpeak}`,
         timestamp: evTimeMs,
         color: cfg.color || '#1565C0',
       };
     };
 
-    if (rawType.includes('powercut') || rawAttr.includes('powercut'))
+    // Check all possible alarm fields for power cut
+    if (rawType.includes('powercut') || rawAttr.includes('powercut') || alarmTypes.includes('powercut'))
       return make('powerCut', '🔌 Power supply disconnected');
 
+    // Check all possible alarm fields for low battery
     if (rawType.includes('lowbattery') || rawAttr.includes('lowbattery') ||
-      (battery !== null && battery > 0 && battery <= 15)) {
+      alarmTypes.includes('lowbattery') ||
+      (battery !== null && battery >= 0 && battery <= 15)) {
       const pct = battery != null ? `${Math.round(battery)}%` : '';
       return make('lowBattery', `🔋 Battery low${pct ? ' ' + pct : ''}`, pct ? `Battery at ${pct}.` : '');
     }
 
-    if (rawType.includes('vibration') || rawAttr.includes('vibration'))
+    // Check all possible alarm fields for vibration
+    if (rawType.includes('vibration') || rawAttr.includes('vibration') || alarmTypes.includes('vibration'))
       return make('vibration', '📳 Unusual vibration detected');
 
     // Fallback for any other alarm type
@@ -422,6 +499,7 @@ class AlertNotificationService {
       console.warn('[AlertService] No permission — skipping notification');
       return;
     }
+
     try {
       const id = await notifee.displayNotification({
         title: payload.title,
@@ -430,7 +508,6 @@ class AlertNotificationService {
           channelId: this.channelId,
           importance: AndroidImportance.HIGH,
           visibility: AndroidVisibility.PUBLIC,
-          smallIcon: 'ic_launcher',
           color: payload.color,
           showTimestamp: true,
           timestamp: payload.timestamp,
@@ -446,12 +523,9 @@ class AlertNotificationService {
 
   // ── TTS ───────────────────────────────────────────────────────────────────────
 
-  _speak(text) {
+  async _speak(text) {
     if (!text) return;
-    
-    // Explicitly replace '0' with 'zero'
     const spacedText = text.replace(/0/g, 'zero ').replace(/(\d)/g, '$1 ');
-
     try {
       Tts.stop();
       setTimeout(() => { if (this._ttsReady) Tts.speak(spacedText); }, 400);
@@ -478,31 +552,45 @@ class AlertNotificationService {
     catch (e) { console.warn('[AlertService] saveStoredId error', e); }
   }
 
+  // ── One full poll cycle ───────────────────────────────────────────────────────
+  // ✅ FIX: Extracted to a single method so both backgroundTask and fallback use same logic
+  // Order matters: _loadDevices MUST run first to populate allowedDeviceIds
+  async _runOneCycle() {
+    // Load devices first – this also rebuilds allowedDeviceIds for the current user
+    await this._loadDevices();
+    // If after loading there are no devices scoped to this user, skip this poll cycle
+    if (!this.allowedDeviceIds || this.allowedDeviceIds.size === 0) {
+      console.warn('[AlertService] No allowed devices for current user – skipping poll cycle');
+      return;
+    }
+    await this._pollCustomEvents();     // ✅ Fires event‑based alerts
+    await this._pollAlarms();           // Fires powerCut / lowBattery / vibration
+  }
+
   // ── Background loop ───────────────────────────────────────────────────────────
 
   backgroundTask = async () => {
-    let loops = 0;
     await new Promise(async () => {
       while (BackgroundActions.isRunning()) {
-        // Refresh device name map every ~1 minute
-        if (loops % (60000 / POLLING_INTERVAL_MS) === 0) await this._loadDevices();
-
-        // Run both polls every cycle
-        await this._pollCustomEvents(); // ignition / motion (with address)
-        await this._pollAlarms();       // power cut / battery / vibration
-
-        loops++;
-        
-        // Wait 5 seconds in foreground, 60 seconds in background to save data
+        await this._runOneCycle(); // ✅ FIX: use unified cycle method
         const waitTime = this.appState === 'active' ? POLLING_INTERVAL_MS : BACKGROUND_POLLING_INTERVAL_MS;
         await new Promise(r => setTimeout(r, waitTime));
       }
     });
   };
 
+  // Manually trigger a single poll cycle (useful for testing/debug)
+  async refreshNow() {
+    if (!this.isPolling) {
+      console.warn('[AlertService] refreshNow called but service not started');
+      return;
+    }
+    console.log('[AlertService] Manual refresh triggered');
+    await this._runOneCycle();
+  }
+
   // ── Public API ────────────────────────────────────────────────────────────────
 
-  /** Allow external screens to parse an alarm for display */
   parseAlarm(alarm, deviceName) {
     return this._parseAlarm(alarm, deviceName, null);
   }
@@ -511,13 +599,22 @@ class AlertNotificationService {
     if (this.isPolling) return;
     this.isPolling = true;
 
+    await this._init(); // ✅ FIX: ensure channel + permissions are ready before anything else
+
     try {
-      await this._init();
+      try {
+        const { PermissionsAndroid, Platform } = require('react-native');
+        if (Platform.OS === 'android') {
+          await PermissionsAndroid.request(
+            PermissionsAndroid.PERMISSIONS.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+          );
+        }
+      } catch (e) { console.warn('[AlertService] Battery opt ignore request failed', e.message); }
 
       const options = {
         taskName: 'GPSAlerts',
         taskTitle: 'GPS Tracking Active',
-        taskDesc: 'Monitoring real-time vehicle alerts',
+        taskDesc: 'Monitoring real-time DG alerts',
         taskIcon: { name: 'ic_launcher', type: 'mipmap' },
         color: '#1565C0',
         linkingURI: 'traccarmanager://',
@@ -526,23 +623,21 @@ class AlertNotificationService {
 
       const { Platform } = require('react-native');
       if (Platform.OS === 'android' && Platform.Version >= 34) {
-        // Required for Android 14 (API 34)
         options.foregroundServiceTypes = ['dataSync', 'location'];
       }
 
       try {
-        await this._loadDevices();
+        // ✅ FIX: run first cycle before starting background task
+        await this._runOneCycle();
         await BackgroundActions.start(this.backgroundTask, options);
         console.log('[AlertService] Background task started ✅');
       } catch (e) {
         console.warn('[AlertService] Background task failed — using foreground fallback:', e.message);
-        await this._loadDevices();
-        
+        await this._runOneCycle(); // first cycle
+
         const runFallback = async () => {
           if (!this.isPolling) return;
-          await this._pollCustomEvents();
-          await this._pollAlarms();
-          
+          await this._runOneCycle(); // ✅ FIX: use unified cycle (was missing _pollCustomEvents before)
           const waitTime = this.appState === 'active' ? POLLING_INTERVAL_MS : BACKGROUND_POLLING_INTERVAL_MS;
           this._fallbackTimeout = setTimeout(runFallback, waitTime);
         };

@@ -17,9 +17,10 @@ const DetailsInfoScreen = ({ route, navigation }) => {
       const shareText = `
 Device Details:
 Name: ${device.name}
-IMEI/ICCID: ${device.iccid || device.uniqueId}
+IMEI: ${device.uniqueId || device.uniqueid || 'N/A'}
+ICCID: ${device.iccid || 'N/A'}
 Status: ${device.status}
-Lat/Lon: ${device.motion_lat}, ${device.motion_lon}
+Lat/Lon: ${device.motion_lat || device.lat}, ${device.motion_lon || device.lon}
 Speed: ${device.speedKmh || 0} km/h
 Last Update: ${formatDate(device.position_time)}
       `.trim();
@@ -32,31 +33,53 @@ Last Update: ${formatDate(device.position_time)}
   const attr = device.attributes || {};
   const isOnline = device.status === 'online';
 
+  // iccid — pehle device.iccid, phir attributes string se parse karo fallback ke liye
+  let iccid = device.iccid || null;
+  if (!iccid && device.attributes) {
+    try {
+      const parsedAttr = typeof device.attributes === 'string'
+        ? JSON.parse(device.attributes)
+        : device.attributes;
+      iccid = parsedAttr?.iccid || null;
+    } catch (_) { }
+  }
+
   const items = [
-    { category: 'Device Identity', rows: [
-      { label: 'Device Name', value: device.name, icon: 'tag-outline' },
-      { label: 'IMEI / ICCID', value: device.iccid || device.uniqueId || 'N/A', icon: 'barcode-scan' },
-      { label: 'Device ID', value: String(device.id), icon: 'identifier' },
-      { label: 'SIM Card Phone', value: device.phone || 'N/A', icon: 'sim' },
-      { label: 'Model', value: device.model || 'N/A', icon: 'cellphone' },
-    ]},
-    { category: 'Current Status', rows: [
-      { label: 'Connection Status', value: isOnline ? 'Online' : 'Offline', icon: 'connection', color: isOnline ? '#10b981' : '#ef4444' },
-      { label: 'Speed', value: `${device.speedKmh || 0} km/h`, icon: 'speedometer' },
-      { label: 'Motion', value: device.motion_status === 1 || device.motion_status === '1' || device.motion_status === true ? 'Moving' : 'Stopped', icon: 'run' },
-      { label: 'Engine Ignition', value: device.ignition_status === 1 || device.ignition_status === '1' || device.ignition_status === true ? 'ON' : 'OFF', icon: 'key' },
-    ]},
-    { category: 'Sensor & Power Attributes', rows: [
-      { label: 'Battery Level', value: device.battery_level != null ? `${device.battery_level}%` : '0%', icon: 'battery' },
-      { label: 'DG Status', value: device.dg_status === 1 || device.dg_status === '1' ? 'ON' : 'OFF', icon: 'lightning-bolt' },
-      { label: 'Charging State', value: device.battery_status === 1 || device.battery_status === '1' || device.battery_status === true ? 'Charging' : 'Not Charging', icon: 'power-plug' },
-      { label: 'Network Strength', value: device.rssi ? `${device.rssi}` : 'N/A', icon: 'signal' },
-    ]},
-    { category: 'Location Telemetry', rows: [
-      { label: 'View Exact Location', value: 'Open Google Maps →', icon: 'google-maps', isMapLink: true,
-        lat: device.motion_lat, lon: device.motion_lon },
-      { label: 'Last Position Time', value: formatDate(device.position_time), icon: 'clock' },
-    ]}
+    {
+      category: 'Device Identity', rows: [
+        { label: 'Device Name', value: device.name || 'N/A', icon: 'tag-outline' },
+        { label: 'IMEI', value: device.uniqueId || device.uniqueid || 'N/A', icon: 'barcode-scan' },
+        { label: 'Device ID', value: String(device.id), icon: 'identifier' },
+        { label: 'ICCID', value: iccid || 'N/A', icon: 'sim-outline' },
+        { label: 'SIM Card Phone', value: device.phone || 'N/A', icon: 'sim' },
+        { label: 'Model', value: device.model || 'N/A', icon: 'cellphone' },
+      ]
+    },
+    {
+      category: 'Current Status', rows: [
+        { label: 'Connection Status', value: isOnline ? 'Online' : 'Offline', icon: 'connection', color: isOnline ? '#10b981' : '#ef4444' },
+        // { label: 'Speed', value: `${device.speedKmh || 0} km/h`, icon: 'speedometer' },
+        { label: 'Motion', value: device.motion_status === 1 || device.motion_status === '1' || device.motion_status === true ? 'Moving' : 'Stopped', icon: 'run' },
+        { label: 'Engine Ignition', value: device.ignition_status === 1 || device.ignition_status === '1' || device.ignition_status === true ? 'ON' : 'OFF', icon: 'key' },
+      ]
+    },
+    {
+      category: 'Sensor & Power Attributes', rows: [
+        { label: 'Battery Level', value: device.battery_level != null ? `${device.battery_level}%` : '0%', icon: 'battery' },
+        { label: 'DG Status', value: device.dg_status === 1 || device.dg_status === '1' ? 'ON' : 'OFF', icon: 'lightning-bolt' },
+        { label: 'Charging State', value: device.battery_status === 1 || device.battery_status === '1' || device.battery_status === true ? 'Charging' : 'Not Charging', icon: 'power-plug' },
+        { label: 'Network Strength', value: device.rssi ? `${device.rssi}` : 'N/A', icon: 'signal' },
+      ]
+    },
+    {
+      category: 'Location Telemetry', rows: [
+        {
+          label: 'View Exact Location', value: 'Open Google Maps →', icon: 'google-maps', isMapLink: true,
+          lat: device.motion_lat || device.lat, lon: device.motion_lon || device.lon
+        },
+        { label: 'Last Position Time', value: formatDate(device.position_time), icon: 'clock' },
+      ]
+    }
   ];
 
   return (
@@ -85,7 +108,7 @@ Last Update: ${formatDate(device.position_time)}
                       onPress={() => {
                         if (row.lat && row.lon) {
                           const url = `https://www.google.com/maps?q=${row.lat},${row.lon}`;
-                          Linking.openURL(url).catch(() => {});
+                          Linking.openURL(url).catch(() => { });
                         }
                       }}
                     >

@@ -20,13 +20,18 @@ const MeScreen = ({ navigation }) => {
     );
   };
 
+  // Compute user initials for avatar display (same as SettingsScreen)
+  const initials = userInfo?.name
+    ? userInfo.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
+    : 'U';
+
   const menuGroups = [
     {
       title: 'Activity & Reporting',
       items: [
-        { name: 'Dashboard', icon: 'view-dashboard', color: '#1565C0', route: 'Dashboard', desc: 'Real-time vehicle status & charts' },
-        { name: 'Reports', icon: 'chart-bar', color: '#10b981', route: 'Reports', desc: 'Summary, route, stops, events logs' },
-        { name: 'DG Alarm Dashboard', icon: 'bell-alert-outline', color: '#ef4444', route: 'AlarmDashboard', desc: 'DG industrial alarm tracking' },
+        { name: 'Dashboard', icon: 'view-dashboard', color: '#1565C0', route: 'Dashboard', desc: 'Real-time DG status & charts' },
+        { name: 'DG Logs', icon: 'chart-bar', color: '#10b981', route: 'DgStatusLog', desc: 'Detailed DG status and logs' },
+        // { name: 'DG Alarm Dashboard', icon: 'bell-alert-outline', color: '#ef4444', route: 'AlarmDashboard', desc: 'DG industrial alarm tracking' },
       ]
     },
     {
@@ -44,12 +49,12 @@ const MeScreen = ({ navigation }) => {
       <ScrollView contentContainerStyle={styles.scroll}>
         {/* Profile Card */}
         <View style={styles.profileCard}>
-          <View style={styles.avatar}>
+          <View style={styles.avatarContainer}>
             <Text style={styles.avatarText}>
-              {userInfo?.name ? userInfo.name.charAt(0).toUpperCase() : 'U'}
+              {initials}
             </Text>
           </View>
-          <View style={styles.profileMeta}>
+          <View style={styles.profileInfo}>
             <Text style={styles.profileName}>{userInfo?.name || 'User'}</Text>
             <Text style={styles.profileEmail}>{userInfo?.email || 'user@example.com'}</Text>
           </View>
@@ -65,7 +70,7 @@ const MeScreen = ({ navigation }) => {
                   <TouchableOpacity
                     style={styles.itemRow}
                     activeOpacity={0.7}
-                    onPress={() => navigation.navigate(item.route)}
+                    onPress={() => item.params ? navigation.navigate(item.route, item.params) : navigation.navigate(item.route)}
                   >
                     <View style={[styles.itemIconContainer, { backgroundColor: `${item.color}15` }]}>
                       <Icon name={item.icon} size={22} color={item.color} />
@@ -104,28 +109,43 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 20,
-    marginBottom: 24,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    elevation: 3,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
   },
+  // Existing avatar styles retained for backward compatibility
   avatar: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#1565C0',
+    backgroundColor: '#EEF2FF',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 16,
+    borderWidth: 2,
+    borderColor: '#C7D2FE',
   },
-  avatarText: { fontSize: 26, fontWeight: '800', color: '#FFFFFF' },
+  // New avatarContainer style matching SettingsScreen
+  avatarContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#EEF2FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+    borderWidth: 2,
+    borderColor: '#C7D2FE',
+  },
+  // profileInfo mirrors SettingsScreen's profileInfo
+  profileInfo: {
+    flex: 1,
+  },
+
+  avatarText: { color: '#4338CA', fontSize: 22, fontWeight: '700' },
   profileMeta: { flex: 1 },
-  profileName: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
-  profileEmail: { fontSize: 13, color: '#64748b', marginTop: 4 },
+  profileName: { fontSize: 17, fontWeight: '700', color: '#0f172a', marginBottom: 7 },
+  profileEmail: { fontSize: 13, color: '#64748b', marginBottom: 8 },
   groupContainer: { marginBottom: 20 },
   groupTitle: { fontSize: 12, fontWeight: '700', color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginLeft: 8 },
   card: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', overflow: 'hidden' },

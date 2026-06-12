@@ -2,24 +2,30 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />
-<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>    
-    <!-- GPS & Location Permissions -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- GPS & Location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    
-    <!-- External Storage (Optional for offline maps) -->
+
+    <!-- Storage -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 
-    <!-- Android 13+ Notifications & Android 14+ Foreground Services -->
+    <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Background service survival -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!-- ZAROORI: Battery optimization bypass — Xiaomi/Samsung/OnePlus pe background kill rokta hai -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
       android:name=".MainApplication"
@@ -31,12 +37,6 @@
       android:usesCleartextTraffic="true"
       android:supportsRtl="true">
 
-      <!-- 
-           GOOGLE MAPS API CONFIGURATION
-           1. Replace "YOUR_GOOGLE_MAPS_API_KEY" with your real key from Google Cloud Console.
-           2. Ensure "Maps SDK for Android" is enabled in Google Cloud Console.
-           3. Key must be restricted to your package: com.traccarmanager.app
-      -->
       <meta-data
         android:name="com.google.android.geo.API_KEY"
         android:value="YOUR_GOOGLE_MAPS_API_KEY_HERE" />
@@ -52,14 +52,22 @@
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
+        <!-- Notification tap pe app seedha khule -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="traccarmanager" />
+        </intent-filter>
       </activity>
 
-      <!-- Explicitly declare Background Actions service for Android 14 compatibility -->
+      <!-- Background Actions service — Android 14 compatible, task close hone pe bhi zinda rahe -->
       <service
         android:name="com.asterinet.react.bgactions.RNBackgroundActionsTask"
         android:foregroundServiceType="dataSync|location"
         android:exported="true"
-        tools:replace="android:exported" />
-      
+        android:stopWithTask="false"
+        tools:replace="android:exported,android:stopWithTask" />
+
     </application>
 </manifest>

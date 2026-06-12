@@ -23,8 +23,10 @@ const ALERT_MAPPING = {
 
 const getAlertConfig = (type = '') => {
   const t = type.toLowerCase();
-  if (t.includes('ignition') || t === 'ignitionon' || t === 'ignitionoff')
-    return { icon: 'key-variant', color: '#ea580c', bg: 'rgba(234,88,12,0.15)' };
+  if (t.includes('ignitionon') || t === 'ignitionon')
+    return { icon: 'key-variant', color: '#00C853', bg: 'rgba(0,200,83,0.15)' };
+  if (t.includes('ignitionoff') || t === 'ignitionoff')
+    return { icon: 'key-remove', color: '#D50000', bg: 'rgba(213,0,0,0.15)' };
   if (t.includes('power'))
     return { icon: 'power-plug-off', color: '#ef4444', bg: 'rgba(239,68,68,0.15)' };
   if (t.includes('battery'))
@@ -39,7 +41,7 @@ const getAlertConfig = (type = '') => {
 };
 
 const TYPE_OPTIONS = [
-  { key: 'ignitionOn', label: 'DG ON', icon: 'key-variant', color: '#ea580c' },
+  { key: 'ignitionOn', label: 'DG ON', icon: 'key-variant', color: '#00C853' },
   { key: 'ignitionOff', label: 'DG OFF', icon: 'key-remove', color: '#ef4444' },
   { key: 'deviceMoving', label: 'DG Moving', icon: 'car-speed-limiter', color: '#10b981' },
   { key: 'deviceStopped', label: 'DG Stopped', icon: 'car-brake-hold', color: '#3b82f6' },
@@ -51,7 +53,6 @@ const ALARM_OPTIONS = [
   { key: 'vibration', label: 'Vibration', icon: 'vibrate', color: '#a855f7' },
 ];
 
-// Stable unique key — same event = same key on every reload
 const getStableKey = (a) => {
   const id = a.id ?? a.event_id ?? '';
   const type = (a.type || '').split(',')[0].trim();
@@ -75,27 +76,46 @@ const getTime = (a) =>
   a.eventtime || a.event_time || a.serverTime || a.server_time
   || a.created_at || a.time || a.timestamp || '';
 
+// ── Normalize alarm type including comma-separated alarm field ───────────────
+const normalizeAlarmType = (a) => {
+  const rawType = String(a.type || '').trim().toLowerCase();
+  const rawAttr = String(a.attributes?.alarm || '').trim().toLowerCase();
+  // FIX: also parse top-level alarm field like "lowBattery,lowBattery"
+  const alarmFieldRaw = String(a.alarm || a.attributes?.alarm || '').toLowerCase();
+  const alarmTypes = alarmFieldRaw.split(',').map(s => s.trim());
+  const batRaw = a.attributes?.batteryLevel ?? a.attributes?.battery ?? a.battery_level;
+  const batVal = batRaw != null ? parseFloat(batRaw) : null;
+
+  if (rawType.includes('powercut') || rawAttr.includes('powercut') || alarmTypes.includes('powercut'))
+    return 'powerCut';
+  if (rawType.includes('lowbattery') || rawAttr.includes('lowbattery') ||
+    alarmTypes.includes('lowbattery') ||
+    (batVal !== null && batVal >= 0 && batVal <= 15))
+    return 'lowBattery';
+  if (rawType.includes('vibration') || rawAttr.includes('vibration') || alarmTypes.includes('vibration'))
+    return 'vibration';
+  return a.type || 'alarm';
+};
+
 // ─────────────────────────────────────────────────────────────
 const AlertsScreen = ({ navigation }) => {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [deviceNames, setDeviceNames] = useState(AlertNotificationService.deviceMap || {});
+  // FIX: start with empty map, populate from cache/fetch before any filtering
+  const [deviceNames, setDeviceNames] = useState({});
   const [showFilter, setShowFilter] = useState(false);
 
-  // Pending (inside modal)
   const [pendingDeviceQ, setPendingDeviceQ] = useState('');
   const [pendingTypes, setPendingTypes] = useState([]);
   const [pendingAlarms, setPendingAlarms] = useState([]);
   const [pendingReadStatus, setPendingReadStatus] = useState('all');
 
-  // Applied (drives the list)
   const [appliedDeviceQ, setAppliedDeviceQ] = useState('');
   const [appliedTypes, setAppliedTypes] = useState([]);
   const [appliedAlarms, setAppliedAlarms] = useState([]);
   const [appliedReadStatus, setAppliedReadStatus] = useState('all');
 
-  // Read/Unread & Bulk Selection
   const [readKeys, setReadKeys] = useState(new Set());
   const [selectedKeys, setSelectedKeys] = useState(new Set());
 
@@ -126,7 +146,6 @@ const AlertsScreen = ({ navigation }) => {
   const clearPending = () => { setPendingDeviceQ(''); setPendingTypes([]); setPendingAlarms([]); setPendingReadStatus('all'); };
   const clearApplied = () => { setAppliedDeviceQ(''); setAppliedTypes([]); setAppliedAlarms([]); setAppliedReadStatus('all'); };
 
-  // ── DELETE selected alerts ──────────────
   const handleBulkDelete = () => {
     if (selectedKeys.size === 0) return;
     Alert.alert(
@@ -143,11 +162,10 @@ const AlertsScreen = ({ navigation }) => {
               AsyncStorage.setItem('cached_alerts_data', JSON.stringify(updated)).catch(() => { });
               return updated;
             });
-            // Hamesha ke liye hide karne ke liye save karo
             AsyncStorage.getItem('cached_deleted_alerts').then(res => {
               const prevDeleted = res ? JSON.parse(res) : [];
               const newDeleted = [...new Set([...prevDeleted, ...selectedKeys])];
-              AsyncStorage.setItem('cached_deleted_alerts', JSON.stringify(newDeleted)).catch(()=>{});
+              AsyncStorage.setItem('cached_deleted_alerts', JSON.stringify(newDeleted)).catch(() => { });
             });
             setSelectedKeys(new Set());
           },
@@ -161,14 +179,24 @@ const AlertsScreen = ({ navigation }) => {
       if (prev.has(key)) return prev;
       const next = new Set(prev);
       next.add(key);
-      AsyncStorage.setItem('cached_read_alerts', JSON.stringify([...next])).catch(() => {});
+      AsyncStorage.setItem('cached_read_alerts', JSON.stringify([...next])).catch(() => { });
       return next;
     });
   };
 
-  // ── Filtered list ──────────────────────────
   const filteredAlerts = useMemo(() => {
     let list = alerts;
+
+    // Strict filter: only show alerts for devices assigned to the logged-in user
+    const allowedDeviceIds = new Set([
+      ...Object.keys(deviceNames),
+      ...Object.keys(AlertNotificationService.deviceMap || {})
+    ].map(k => String(k)));
+
+    list = list.filter(a => {
+      const id = a.deviceid || a.deviceId;
+      return id != null && allowedDeviceIds.has(String(id));
+    });
 
     if (appliedReadStatus === 'read') {
       list = list.filter(a => readKeys.has(getStableKey(a)));
@@ -196,37 +224,43 @@ const AlertsScreen = ({ navigation }) => {
         );
       });
     }
-    return list;
-  }, [alerts, appliedDeviceQ, appliedTypes, appliedAlarms, deviceNames, appliedReadStatus, readKeys]);
 
-  // ── Load data — sare alerts, koi date filter nahi ──
+    return list;
+  }, [alerts, appliedDeviceQ, appliedTypes, appliedAlarms, appliedReadStatus, readKeys, deviceNames]);
+
+  // ── Load data ──────────────────────────────────────────────────────────────────
   const loadData = useCallback(async (isRefresh = false) => {
-    let hasCache = false;
     if (isRefresh) {
       setRefreshing(true);
     } else {
-      // Cache se instantly dikhao
+      // Load cache immediately for fast UI
       try {
         const cachedDeletedStr = await AsyncStorage.getItem('cached_deleted_alerts');
         const deletedSet = new Set(cachedDeletedStr ? JSON.parse(cachedDeletedStr) : []);
-        
+
         const cached = await AsyncStorage.getItem('cached_alerts_data');
         if (cached) {
           const parsed = JSON.parse(cached);
           if (parsed && parsed.length > 0) {
-            const filteredCache = deduplicateAlerts(parsed).filter(a => !deletedSet.has(getStableKey(a)));
+            const todayStart = moment().startOf('day').valueOf();
+            const todayEnd = moment().endOf('day').valueOf();
+            const filteredCache = deduplicateAlerts(parsed).filter(a => {
+              const t = moment(getTime(a)).valueOf();
+              return t >= todayStart && t <= todayEnd && !deletedSet.has(getStableKey(a));
+            });
             setAlerts(filteredCache);
             setLoading(false);
-            hasCache = true;
           }
         }
       } catch (_) { }
+
       try {
         const cachedReads = await AsyncStorage.getItem('cached_read_alerts');
-        if (cachedReads) {
-          setReadKeys(new Set(JSON.parse(cachedReads)));
-        }
+        if (cachedReads) setReadKeys(new Set(JSON.parse(cachedReads)));
       } catch (_) { }
+
+      // FIX: Load cached device names immediately so deviceNames is populated
+      // before any filtering happens — prevents the blank-screen race condition
       try {
         const cachedNames = await AsyncStorage.getItem('cached_device_names');
         if (cachedNames) {
@@ -237,48 +271,44 @@ const AlertsScreen = ({ navigation }) => {
       } catch (_) { }
     }
 
-    // ⭐ SILENT BACKGROUND SYNC:
-    // Screen instantly opens with cache. 
-    // We silently fetch latest data in background without blocking UI or showing spinner.
-    // So the user sees new alerts pop in automatically without manual refresh.
-    
     try {
-      const [alarmsRaw, customRaw] = await Promise.all([
-        fetchAlarms().catch(() => []),
-        fetchCustomEvents().catch(() => []),
-      ]);
-      
-      // Start fetching devices in background to update names later, don't block
-      fetchDeviceList().then(devicesData => {
+      // FIX: Fetch device list FIRST and build myDeviceIds BEFORE fetching/filtering alerts.
+      // Previous code fetched devices in background (non-blocking) which meant myDeviceIds
+      // was an empty Set when the filter ran, dropping ALL alerts.
+      let myDeviceIds = new Set(Object.keys(AlertNotificationService.deviceMap));
+
+      // Always refresh device list to get latest names + IDs
+      try {
+        const devicesData = await fetchDeviceList();
         const myDevices = Array.isArray(devicesData) ? devicesData : (devicesData?.devices || []);
-        const names = { ...AlertNotificationService.deviceMap };
+        const names = {};
         myDevices.forEach(d => {
           if (d.id != null) names[d.id] = d.name || `Device ${d.id}`;
         });
         setDeviceNames(names);
-        AlertNotificationService.deviceMap = names;
-        AsyncStorage.setItem('cached_device_names', JSON.stringify(names)).catch(() => {});
-      }).catch(() => {});
+        AlertNotificationService.deviceMap = { ...AlertNotificationService.deviceMap, ...names };
+        myDeviceIds = new Set(Object.keys(names));
+        AsyncStorage.setItem('cached_device_names', JSON.stringify(names)).catch(() => { });
+      } catch (_) {
+        // If device fetch fails, fall back to what we already have
+        myDeviceIds = new Set(Object.keys(AlertNotificationService.deviceMap));
+      }
 
-      let alarmsList = Array.isArray(alarmsRaw) ? alarmsRaw : (alarmsRaw?.data || []);
-      let customList = Array.isArray(customRaw) ? customRaw : (customRaw?.data || []);
+      // Now fetch alarms and custom events in parallel
+      const [alarmsRaw, customRaw] = await Promise.all([
+        fetchAlarms().catch(() => []),
+        fetchCustomEvents().catch(() => []),
+      ]);
 
-      // Just normalize Alarms like we normalize Custom Events
+      const alarmsList = Array.isArray(alarmsRaw) ? alarmsRaw : (alarmsRaw?.data || []);
+      const customList = Array.isArray(customRaw) ? customRaw : (customRaw?.data || []);
+
+      // Normalize alarms — uses the fixed normalizeAlarmType which handles comma-separated field
       const normalizedAlarms = alarmsList.map(a => {
-        const rawType = String(a.type || '').trim().toLowerCase();
-        const rawAttr = String(a.attributes?.alarm || '').trim().toLowerCase();
-        const battery = a.attributes?.batteryLevel ?? a.attributes?.battery;
-        const batVal = battery != null ? parseFloat(battery) : null;
-
-        let type = a.type || 'alarm';
-        if (rawType.includes('powercut') || rawAttr.includes('powercut')) type = 'powerCut';
-        else if (rawType.includes('lowbattery') || rawAttr.includes('lowbattery') || (batVal !== null && batVal > 0 && batVal <= 15)) type = 'lowBattery';
-        else if (rawType.includes('vibration') || rawAttr.includes('vibration')) type = 'vibration';
-
+        const type = normalizeAlarmType(a);
         const timeVal = a.eventtime || a.serverTime || a.created_at || a.time || a.timestamp || '';
-        const deviceId = a.deviceId || a.deviceid;
-        const stableId = (a.id) ? String(a.id) : `${type}_${deviceId}_${timeVal}`;
-
+        const deviceId = a.deviceId || a.deviceid || a.device_id;
+        const stableId = a.id ? String(a.id) : `${type}_${deviceId}_${timeVal}`;
         return {
           id: stableId,
           type,
@@ -287,23 +317,24 @@ const AlertsScreen = ({ navigation }) => {
           address: a.address || '',
           latitude: parseFloat(a.latitude || a.lat || a.attributes?.latitude || 0) || 0,
           longitude: parseFloat(a.longitude || a.lon || a.attributes?.longitude || 0) || 0,
-          original: a
+          original: a,
         };
       });
 
-      // Custom events normalize karo with stable IDs
+      // Normalize custom events
       const normalizedCustom = customList.map(e => {
         const lower = String(e.event_type || e.type || '').toLowerCase();
+        const cleanKey = lower.replace(/[\s_]/g, '');
         let type = e.event_type || e.type || '';
-        if (lower === 'ignitionon' || lower === 'ignition_on') type = 'ignitionOn';
-        else if (lower === 'ignitionoff' || lower === 'ignition_off') type = 'ignitionOff';
-        else if (lower === 'devicemoving' || lower.includes('moving')) type = 'deviceMoving';
-        else if (lower === 'devicestopped' || lower.includes('stopped')) type = 'deviceStopped';
+        if (cleanKey.includes('ignitionon')) type = 'ignitionOn';
+        else if (cleanKey.includes('ignitionoff')) type = 'ignitionOff';
+        else if (cleanKey.includes('devicemoving') || cleanKey.includes('moving')) type = 'deviceMoving';
+        else if (cleanKey.includes('devicestopped') || cleanKey.includes('stopped')) type = 'deviceStopped';
 
         const timeVal = e.event_time || e.eventtime || e.serverTime || e.created_at || e.time || e.timestamp || '';
         const deviceId = e.deviceid || e.deviceId || e.device_id;
         const stableId = (e.event_id || e.id)
-          ? String(e.event_id || e.id)
+          ? `${type}_${String(e.event_id || e.id)}`
           : `${type}_${deviceId}_${timeVal}`;
 
         return {
@@ -317,54 +348,38 @@ const AlertsScreen = ({ navigation }) => {
         };
       });
 
-      // Define myDeviceIds using known user devices from cache
-      const myDeviceIds = new Set(Object.keys(AlertNotificationService.deviceMap));
+      // Strict filter using current user's device IDs only
+      const filteredCustom = normalizedCustom.filter(c => myDeviceIds.has(String(c.deviceId)));
+      const filteredAlarms = normalizedAlarms.filter(a => myDeviceIds.has(String(a.deviceId)));
 
-      const filteredCustom = myDeviceIds.size > 0
-        ? normalizedCustom.filter(e => myDeviceIds.has(String(e.deviceId ?? '')))
-        : normalizedCustom;
-
-      const filteredAlarms = myDeviceIds.size > 0
-        ? normalizedAlarms.filter(a => myDeviceIds.has(String(a.deviceId ?? '')))
-        : normalizedAlarms;
-
-      // Combine → deduplicate
       let fresh = deduplicateAlerts([...filteredAlarms, ...filteredCustom]);
-      
-      // Aj ka date filter (Today only) and Ignore deleted
-      const todayStart = moment().startOf('day').valueOf();
-      const todayEnd = moment().endOf('day').valueOf();
-      
+
       let deletedSet = new Set();
       try {
         const cachedDeletedStr = await AsyncStorage.getItem('cached_deleted_alerts');
         if (cachedDeletedStr) deletedSet = new Set(JSON.parse(cachedDeletedStr));
-      } catch(e) {}
-      
+      } catch (_) { }
+
+      const todayStart = moment().startOf('day').valueOf();
+      const todayEnd = moment().endOf('day').valueOf();
+
       fresh = fresh.filter(a => {
         const t = moment(getTime(a)).valueOf();
-        const inDate = t && t >= todayStart && t <= todayEnd;
-        return inDate && !deletedSet.has(getStableKey(a));
+        return t >= todayStart && t <= todayEnd && !deletedSet.has(getStableKey(a));
       });
 
       fresh.sort((a, b) =>
         (moment(getTime(b)).valueOf() || 0) - (moment(getTime(a)).valueOf() || 0),
       );
 
-      // Naye alerts cache ke saath merge karo
       setAlerts(prev => {
         const prevKeys = new Set(prev.map(a => getStableKey(a)));
-        const freshKeys = new Set(fresh.map(a => getStableKey(a)));
         const newAlerts = fresh.filter(a => !prevKeys.has(getStableKey(a)));
-
         let merged = deduplicateAlerts([...newAlerts, ...prev]);
-        
-        // Cache ko bhi aaj ke din par filter karo
         merged = merged.filter(a => {
           const t = moment(getTime(a)).valueOf();
-          return t && t >= todayStart && t <= todayEnd;
+          return t >= todayStart && t <= todayEnd;
         });
-
         merged.sort((a, b) =>
           (moment(getTime(b)).valueOf() || 0) - (moment(getTime(a)).valueOf() || 0),
         );
@@ -383,10 +398,11 @@ const AlertsScreen = ({ navigation }) => {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // ── Render item ─────────────────────────────
+  // ── Render item ─────────────────────────────────────────────────────────────
   const renderItem = ({ item }) => {
     const cleanType = (item.type || '').split(',')[0].trim();
-    const displayName = ALERT_MAPPING[cleanType] || cleanType || 'Unknown Alert';
+    const typeParts = (item.type || '').split(',').map(p => p.trim()).filter(Boolean);
+    const displayName = typeParts.map(t => ALERT_MAPPING[t] || t).join(', ') || 'Unknown Alert';
     const config = getAlertConfig(cleanType);
     const ts = item.eventtime || item.serverTime;
     const timeStr = ts ? moment(ts).format('hh:mm A') : '--';
@@ -407,7 +423,6 @@ const AlertsScreen = ({ navigation }) => {
           navigation.navigate('AlertDetails', { alert: item });
         }}
       >
-        {/* Checkbox */}
         <TouchableOpacity
           style={{ paddingRight: 10, justifyContent: 'center' }}
           onPress={() => {
@@ -420,12 +435,10 @@ const AlertsScreen = ({ navigation }) => {
           <Icon name={isSelected ? 'checkbox-marked' : 'checkbox-blank-outline'} size={24} color={isSelected ? '#38bdf8' : '#4b5563'} />
         </TouchableOpacity>
 
-        {/* Left icon */}
         <View style={[styles.iconWrap, { backgroundColor: config.bg }]}>
           <Icon name={config.icon} size={24} color={config.color} />
         </View>
 
-        {/* Content */}
         <View style={styles.cardContent}>
           <Text style={[styles.alertName, !isRead && { fontWeight: '800', color: '#f8fafc' }]}>{displayName}</Text>
           <Text style={[styles.deviceText, !isRead && { fontWeight: '600', color: '#e2e8f0' }]}>{deviceName}</Text>
@@ -435,7 +448,6 @@ const AlertsScreen = ({ navigation }) => {
           </View>
         </View>
 
-        {/* Unread indicator dot */}
         {!isRead && (
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#38bdf8', alignSelf: 'center', marginLeft: 8 }} />
         )}
@@ -443,7 +455,6 @@ const AlertsScreen = ({ navigation }) => {
     );
   };
 
-  // ── Chip ────────────────────────────────────
   const Chip = ({ item, selected, onToggle }) => (
     <TouchableOpacity
       style={[styles.chip, selected && { backgroundColor: item.color + '22', borderColor: item.color }]}
@@ -456,13 +467,11 @@ const AlertsScreen = ({ navigation }) => {
     </TouchableOpacity>
   );
 
-  // ── MAIN RENDER ─────────────────────────────
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0f172a" />
       <Header title="Security Alerts" navigation={navigation} />
 
-      {/* Filter trigger bar */}
       <View style={styles.filterBar}>
         <TouchableOpacity style={styles.filterBtn} onPress={openFilter} activeOpacity={0.8}>
           <Icon name="filter-variant" size={18} color={activeFilterCount > 0 ? '#22c55e' : '#94a3b8'} />
@@ -505,7 +514,6 @@ const AlertsScreen = ({ navigation }) => {
         )}
       </View>
 
-      {/* Alert count & Bulk Delete */}
       <View style={styles.countRow}>
         <Text style={styles.countText}>
           {filteredAlerts.length} alert{filteredAlerts.length !== 1 ? 's' : ''}
@@ -519,7 +527,6 @@ const AlertsScreen = ({ navigation }) => {
         )}
       </View>
 
-      {/* Filter Bottom Sheet */}
       <Modal
         transparent
         animationType="slide"
@@ -529,7 +536,6 @@ const AlertsScreen = ({ navigation }) => {
         <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setShowFilter(false)} />
         <View style={styles.sheet}>
           <View style={styles.handle} />
-
           <View style={styles.sheetHeader}>
             <Text style={styles.sheetTitle}>Filter Alerts</Text>
             <TouchableOpacity onPress={clearPending}>
@@ -538,8 +544,6 @@ const AlertsScreen = ({ navigation }) => {
           </View>
 
           <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
-
-            {/* Device Search */}
             <Text style={styles.sectionLabel}>DEVICE SEARCH</Text>
             <View style={styles.searchBox}>
               <Icon name="magnify" size={18} color="#64748b" style={{ marginRight: 8 }} />
@@ -558,7 +562,6 @@ const AlertsScreen = ({ navigation }) => {
               )}
             </View>
 
-            {/* Event Types */}
             <View style={styles.sectionRow}>
               <Text style={styles.sectionLabel}>EVENT TYPE</Text>
               {pendingTypes.length > 0 && (
@@ -573,7 +576,6 @@ const AlertsScreen = ({ navigation }) => {
               ))}
             </View>
 
-            {/* Alarms */}
             <View style={styles.sectionRow}>
               <Text style={styles.sectionLabel}>ALARMS</Text>
               {pendingAlarms.length > 0 && (
@@ -588,31 +590,24 @@ const AlertsScreen = ({ navigation }) => {
               ))}
             </View>
 
-            {/* Read Status */}
             <View style={styles.sectionRow}>
               <Text style={styles.sectionLabel}>READ STATUS</Text>
             </View>
             <View style={styles.chipGrid}>
-              <TouchableOpacity
-                style={[styles.chip, pendingReadStatus === 'all' && { backgroundColor: '#38bdf822', borderColor: '#38bdf8' }]}
-                onPress={() => setPendingReadStatus('all')}
-              >
-                <Text style={[styles.chipText, pendingReadStatus === 'all' && { color: '#38bdf8' }]}>All</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.chip, pendingReadStatus === 'unread' && { backgroundColor: '#38bdf822', borderColor: '#38bdf8' }]}
-                onPress={() => setPendingReadStatus('unread')}
-              >
-                <Text style={[styles.chipText, pendingReadStatus === 'unread' && { color: '#38bdf8' }]}>Unread</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.chip, pendingReadStatus === 'read' && { backgroundColor: '#38bdf822', borderColor: '#38bdf8' }]}
-                onPress={() => setPendingReadStatus('read')}
-              >
-                <Text style={[styles.chipText, pendingReadStatus === 'read' && { color: '#38bdf8' }]}>Read</Text>
-              </TouchableOpacity>
+              {[
+                { val: 'all', label: 'All' },
+                { val: 'unread', label: 'Unread' },
+                { val: 'read', label: 'Read' },
+              ].map(({ val, label }) => (
+                <TouchableOpacity
+                  key={val}
+                  style={[styles.chip, pendingReadStatus === val && { backgroundColor: '#38bdf822', borderColor: '#38bdf8' }]}
+                  onPress={() => setPendingReadStatus(val)}
+                >
+                  <Text style={[styles.chipText, pendingReadStatus === val && { color: '#38bdf8' }]}>{label}</Text>
+                </TouchableOpacity>
+              ))}
             </View>
-
           </ScrollView>
 
           <View style={styles.applyRow}>
@@ -631,7 +626,6 @@ const AlertsScreen = ({ navigation }) => {
         </View>
       </Modal>
 
-      {/* Alert List */}
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#38bdf8" />
@@ -680,8 +674,6 @@ const styles = StyleSheet.create({
   countText: { fontSize: 12, color: '#475569', fontWeight: '600' },
   bulkDeleteBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#ef4444', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, gap: 4 },
   bulkDeleteText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-
-  // Card
   card: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#1e293b',
     borderRadius: 16, padding: 14, marginBottom: 12,
@@ -693,13 +685,9 @@ const styles = StyleSheet.create({
   deviceText: { fontSize: 13, color: '#94a3b8', fontWeight: '500', marginBottom: 6 },
   timeBadge: { flexDirection: 'row', alignItems: 'center' },
   timeText: { fontSize: 11, color: '#64748b', fontWeight: '600' },
-  deleteBtn: { padding: 8, marginLeft: 4, borderRadius: 10, backgroundColor: 'rgba(239,68,68,0.1)' },
-
   emptyText: { marginTop: 14, fontSize: 15, color: '#64748b', fontWeight: '600', textAlign: 'center' },
   clearFilterBtn: { marginTop: 12, paddingHorizontal: 20, paddingVertical: 8, backgroundColor: '#1e293b', borderRadius: 10, borderWidth: 1, borderColor: '#334155' },
   clearFilterText: { color: '#38bdf8', fontSize: 13, fontWeight: '600' },
-
-  // Filter bar
   filterBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginTop: 10, marginBottom: 4 },
   filterBtn: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#1e293b',
@@ -711,8 +699,6 @@ const styles = StyleSheet.create({
   appliedChipText: { fontSize: 12, color: '#38bdf8', fontWeight: '600' },
   clearChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: '#ef444466', borderRadius: 20, paddingHorizontal: 10, paddingVertical: 5 },
   clearChipText: { fontSize: 12, color: '#ef4444', fontWeight: '600' },
-
-  // Bottom sheet
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
   sheet: {
     backgroundColor: '#1e293b', borderTopLeftRadius: 24, borderTopRightRadius: 24,
@@ -723,19 +709,15 @@ const styles = StyleSheet.create({
   sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   sheetTitle: { color: '#f8fafc', fontSize: 17, fontWeight: '700' },
   clearAllText: { color: '#ef4444', fontSize: 13, fontWeight: '600' },
-
   sectionLabel: { color: '#64748b', fontSize: 11, fontWeight: '700', letterSpacing: 1, marginTop: 16, marginBottom: 10 },
   sectionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16, marginBottom: 10 },
   selBadge: { backgroundColor: '#22c55e22', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2, borderWidth: 1, borderColor: '#22c55e55' },
   selBadgeText: { color: '#22c55e', fontSize: 11, fontWeight: '700' },
-
   searchBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#0f172a', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, borderWidth: 1, borderColor: '#334155' },
   searchInput: { flex: 1, color: '#f8fafc', fontSize: 14, padding: 0 },
-
   chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9, paddingHorizontal: 14, borderRadius: 22, borderWidth: 1.5, borderColor: '#334155', backgroundColor: '#0f172a' },
   chipText: { color: '#64748b', fontSize: 13, fontWeight: '600' },
-
   applyRow: { flexDirection: 'row', gap: 10, marginTop: 18 },
   cancelBtn: { flex: 1, paddingVertical: 14, borderRadius: 14, alignItems: 'center', borderWidth: 1, borderColor: '#334155', backgroundColor: '#0f172a' },
   cancelText: { color: '#94a3b8', fontWeight: '600', fontSize: 14 },

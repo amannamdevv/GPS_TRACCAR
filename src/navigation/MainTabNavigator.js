@@ -60,6 +60,7 @@ const MeStack = () => (
     <Stack.Screen name="MeMain" component={MeScreen} />
     <Stack.Screen name="Dashboard" component={DashboardScreen} />
     <Stack.Screen name="Reports" component={ReportsScreen} />
+    <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
     <Stack.Screen name="Settings" component={SettingsScreen} />
     <Stack.Screen name="AlarmDashboard" component={AlarmDashboardScreen} />
   </Stack.Navigator>
@@ -94,16 +95,17 @@ const MainTabNavigator = () => {
           }
           return <Icon name={iconName} size={24} color={color} />;
         },
-        tabBarActiveTintColor: '#1565C0',
-        tabBarInactiveTintColor: '#64748b',
+        tabBarActiveTintColor: '#0D47A1',
+        tabBarInactiveTintColor: '#9E9E9E',
         tabBarStyle: {
-          backgroundColor: '#FFFFFF',
+          backgroundColor: '#F9F9F9',
           borderTopWidth: 1,
           borderTopColor: '#e2e8f0',
           height: 60,
           paddingBottom: 8,
           paddingTop: 8,
         },
+        tabBarShowLabel: true,
         tabBarLabelStyle: {
           fontSize: 11,
           fontWeight: '600',
@@ -128,7 +130,7 @@ const MainTabNavigator = () => {
       <Tab.Screen
         name="MeTab"
         component={MeStack}
-        options={{ tabBarLabel: 'Me' }}
+        options={{ tabBarLabel: 'Profile' }}
       />
     </Tab.Navigator>
   );

@@ -1,4 +1,4 @@
-package com.traccarmanager.app
+package com.stpl.gpstracker
 
 import android.app.Application
 import com.facebook.react.PackageList

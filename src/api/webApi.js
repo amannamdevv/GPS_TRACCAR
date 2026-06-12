@@ -2,6 +2,7 @@
 
 import axios from 'axios';
 import moment from 'moment';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const BASE_URL = 'https://gps.shrotitele.com/api';
 
@@ -12,6 +13,22 @@ const webApi = axios.create({
     Accept: 'application/json',
   },
 });
+
+// Automatically attach user ID to all API requests to ensure data is scoped to the logged-in user
+webApi.interceptors.request.use(async (config) => {
+  if (config.url && config.url.includes('/login')) return config;
+  try {
+    const userInfoStr = await AsyncStorage.getItem('userInfo');
+    if (userInfoStr) {
+      const userInfo = JSON.parse(userInfoStr);
+      const aid = userInfo.id || userInfo.aid;
+      if (aid) {
+        config.params = { aid, userid: aid, user_id: aid, ...config.params };
+      }
+    }
+  } catch (e) { }
+  return config;
+}, (error) => Promise.reject(error));
 
 // ─── Helper: GET with retry on 503 ───────────────────────────────────────────
 const getWithRetry = async (url, config = {}, maxAttempts = 3, delayMs = 2000) => {
@@ -45,7 +62,7 @@ const normalizeDeviceData = (rawData) => {
     const id = dev.deviceid != null ? dev.deviceid : (dev.id != null ? dev.id : null);
     const name = dev.device_name || dev.name || 'Unknown Device';
     const uniqueId = dev.uniqueid || dev.uniqueId || dev.imei || dev.iccid || '';
-    const iccid = dev.uniqueid || dev.uniqueId || dev.imei || dev.iccid || 'N/A';
+    const iccid = dev.iccid || 'N/A';
 
     let attrs = {};
     if (dev.current_attributes) {
@@ -132,25 +149,45 @@ export const fetchDeviceList = async () => {
     }
 
     const map = new Map();
-    // 1. Add all standard devices (which includes 'unknown' status devices)
-    allDevices.forEach(d => {
+
+    // Build a map of ICCID from latestData (dg_device_latest_json)
+    const iccidMap = new Map();
+    latestData.forEach(d => {
       const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
-      if (id != null) {
-        map.set(String(id), { ...d });
+      if (id != null && d.iccid) {
+        iccidMap.set(String(id), d.iccid);
       }
     });
 
-    // 2. Override with the custom latest position data (richer attributes)
+    // 1. Add only devices that belong to the logged‑in user (present in latestData).
+    const allowedIds = new Set(latestData.map(d => {
+      const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
+      return id != null ? String(id) : null;
+    }).filter(Boolean));
+    allDevices.forEach(d => {
+      const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
+      if (id != null && allowedIds.has(String(id))) {
+        const iccid = iccidMap.get(String(id));
+        map.set(String(id), { ...d, iccid: iccid ?? d.iccid });
+      }
+    });
+
+    // 2. Override with the custom latest position data ONLY for our scoped devices
     latestData.forEach(d => {
       const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
-      if (id != null) {
+      if (id != null && allowedIds.has(String(id))) {
         const existing = map.get(String(id)) || {};
         map.set(String(id), { ...existing, ...d });
       }
     });
 
     const mergedArray = Array.from(map.values());
-    return normalizeDeviceData(mergedArray);
+    const result = normalizeDeviceData(mergedArray);
+    // Re‑calculate counts based on final device list
+    result.total_devices = result.devices.length;
+    result.active_devices = result.devices.filter(d => d.status === 'online').length;
+    result.non_active_devices = result.devices.filter(d => d.status !== 'online').length;
+    return result;
   } catch (error) {
     console.error('[webApi] Error fetching device list:', error);
     throw new Error(error.response?.data?.message || 'Failed to fetch live devices from server.');
@@ -177,8 +214,46 @@ export const fetchCustomEvents = async () => {
 export const fetchAlarms = async (deviceId) => {
   try {
     const url = deviceId ? `/alaram/${deviceId}/` : '/alaram/';
-    const response = await webApi.get(url);
-    return response.data || [];
+    // Fetch alarms AND user-scoped device list in parallel (using /devices to cover all 243 devices)
+    const [alarmsResp, scopeResp] = await Promise.allSettled([
+      webApi.get(url),
+      getWithRetry('/devices'),
+    ]);
+
+    let raw = [];
+    if (alarmsResp.status === 'fulfilled') {
+      const responseData = alarmsResp.value?.data;
+      if (responseData && Array.isArray(responseData.data)) {
+        raw = responseData.data;
+      } else if (Array.isArray(responseData)) {
+        raw = responseData;
+      } else if (responseData && Array.isArray(responseData.alarms)) {
+        raw = responseData.alarms;
+      }
+    }
+
+    // Build allowed device IDs set
+    const allowedIds = new Set();
+    if (scopeResp.status === 'fulfilled' && scopeResp.value?.data) {
+      const scopeRaw = scopeResp.value.data;
+      let scopeList = [];
+      if (Array.isArray(scopeRaw)) scopeList = scopeRaw;
+      else if (Array.isArray(scopeRaw.data)) scopeList = scopeRaw.data;
+      else if (typeof scopeRaw === 'object') scopeList = Object.values(scopeRaw);
+      scopeList.forEach(d => {
+        const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
+        if (id != null) allowedIds.add(String(id));
+      });
+    }
+
+    // Filter alarms to only user's devices
+    if (allowedIds.size > 0 && Array.isArray(raw)) {
+      return raw.filter(a => {
+        const devId = a.deviceid ?? a.deviceId ?? a.device_id;
+        return devId != null && allowedIds.has(String(devId));
+      });
+    }
+    return Array.isArray(raw) ? raw : [];
   } catch (e) {
     if (e.message !== 'Network Error') {
       console.warn('[webApi] Failed to fetch alarms:', e.message);
@@ -190,16 +265,44 @@ export const fetchAlarms = async (deviceId) => {
 // ─── fetchDgStatusLogs ────────────────────────────────────────────────────────
 export const fetchDgStatusLogs = async (params = {}) => {
   try {
-    const response = await webApi.get('/dg_merged_status_api/', { params });
+    // Fetch DG status logs AND the user-scoped device list in parallel
+    const [statusResp, scopeResp] = await Promise.allSettled([
+      webApi.get('/dg_merged_status_api/', { params }),
+      getWithRetry('/dg_device_latest_json/'),
+    ]);
 
-    const raw = response.data;
+    // Parse status logs
+    let result = [];
+    if (statusResp.status === 'fulfilled') {
+      const raw = statusResp.value?.data;
+      result = raw && raw.data ? raw.data : (Array.isArray(raw) ? raw : (raw && Array.isArray(raw.results) ? raw.results : []));
+    } else {
+      throw statusResp.reason;
+    }
 
-    if (raw && Array.isArray(raw.data)) return raw.data;
-    if (raw && Array.isArray(raw.results)) return raw.results;
-    if (Array.isArray(raw)) return raw;
+    // Build set of allowed device IDs from the user-scoped endpoint
+    const allowedIds = new Set();
+    if (scopeResp.status === 'fulfilled' && scopeResp.value?.data) {
+      const scopeRaw = scopeResp.value.data;
+      let scopeList = [];
+      if (Array.isArray(scopeRaw)) scopeList = scopeRaw;
+      else if (Array.isArray(scopeRaw.data)) scopeList = scopeRaw.data;
+      else if (typeof scopeRaw === 'object') scopeList = Object.values(scopeRaw);
+      scopeList.forEach(d => {
+        const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
+        if (id != null) allowedIds.add(String(id));
+      });
+    }
 
-    console.warn('[webApi] fetchDgStatusLogs unexpected response:', raw);
-    return [];
+    // Filter: only keep logs for devices that belong to this user
+    if (allowedIds.size > 0) {
+      return result.filter(d => {
+        const devId = d.deviceid ?? d.device_id ?? d.deviceId;
+        return devId != null && allowedIds.has(String(devId));
+      });
+    }
+
+    return result;
   } catch (e) {
     console.error('[webApi] Failed to fetch DG status logs:', e.message);
     throw e;
@@ -316,11 +419,11 @@ export const loginApi = async (serverUrl, email, password) => {
 
     if (response.data && response.data.status) {
       const u = response.data.user;
-      return { 
-        id: u.aid, 
-        name: u.fullname, 
-        email: email, 
-        ...u 
+      return {
+        id: u.aid,
+        name: u.fullname,
+        email: email,
+        ...u
       };
     } else {
       throw new Error(response.data?.message || 'Invalid Login ID or Password');
@@ -347,7 +450,7 @@ export const getTripsReport = async (deviceId, from, to) => {
       const tid = t.deviceid ?? t.deviceId ?? t.device_id;
       return !tid || String(tid) === String(deviceId);
     });
-    
+
     return filtered.map(t => ({
       startTime: t.start_time ?? t.position_time,
       endTime: t.end_time ?? t.position_time,

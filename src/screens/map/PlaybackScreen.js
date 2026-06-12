@@ -94,6 +94,7 @@ const PlaybackScreen = ({ route, navigation }) => {
   
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubRatio, setScrubRatio] = useState(0);
+  const [followMode, setFollowMode] = useState(true);
 
   // HUD telemetry
   const [liveTel, setLiveTel] = useState({
@@ -114,11 +115,13 @@ const PlaybackScreen = ({ route, navigation }) => {
   const elapsedMsRef = useRef(0);
   const progBarLayoutRef = useRef({ x: 0, width: BAR_WIDTH });
   const lastSeekDragRef = useRef(0);
+  const followModeRef = useRef(followMode);
 
   useEffect(() => { routePointsRef.current = routePoints; }, [routePoints]);
   useEffect(() => { mileageArrRef.current = mileageArr; }, [mileageArr]);
   useEffect(() => { currentAddressRef.current = currentAddress; }, [currentAddress]);
   useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
+  useEffect(() => { followModeRef.current = followMode; }, [followMode]);
 
   const deviceId = device.deviceid ?? device.id;
   const BAR_WIDTH = width - 40;
@@ -402,7 +405,7 @@ const PlaybackScreen = ({ route, navigation }) => {
       };
 
       if (now - lastBridgeSendRef.current >= 16) {
-        sendToMap('UPDATE_CAR', { coord: [lat, lng], course: crs, speed: spd, follow: true, telemetry: tel });
+        sendToMap('UPDATE_CAR', { coord: [lat, lng], course: crs, speed: spd, follow: followModeRef.current, telemetry: tel });
         lastBridgeSendRef.current = now;
       }
 
@@ -460,7 +463,7 @@ const PlaybackScreen = ({ route, navigation }) => {
     setLiveTel(tel);
     sendToMap('UPDATE_CAR', {
       coord: [pt.latitude, pt.longitude],
-      course: pt.course, speed: spd, follow: true,
+      course: pt.course, speed: spd, follow: followModeRef.current,
       telemetry: { ...tel, time: moment(pt.fixTime).format('YYYY-MM-DD HH:mm:ss'), address: currentAddressRef.current },
     });
     getCachedAddress(pt.latitude, pt.longitude).then(addr => {
@@ -712,6 +715,10 @@ setTimeout(function(){
           <View style={s.zoomDiv} />
           <TouchableOpacity style={s.zoomBtn} onPress={zoomOut} activeOpacity={0.75}>
             <Text style={s.zoomTxt}>−</Text>
+          </TouchableOpacity>
+          <View style={s.zoomDiv} />
+          <TouchableOpacity style={s.zoomBtn} onPress={() => setFollowMode(!followMode)} activeOpacity={0.75}>
+            <Icon name="navigation" size={18} color={followMode ? '#0284c7' : '#f1f5f9'} />
           </TouchableOpacity>
         </View>
       )}

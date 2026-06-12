@@ -44,7 +44,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
   // ── DG Report Filters ──
   const [dgStatusFilter, setDgStatusFilter] = useState('ALL'); // ALL, OFF, ON, MOVE, STOPPED
   const [dgDateFrom, setDgDateFrom] = useState(() => {
-    const d = new Date(); d.setHours(0,0,0,0); return d;
+    const d = new Date(); d.setHours(0, 0, 0, 0); return d;
   });
   const [dgDateTo, setDgDateTo] = useState(new Date());
   const [showDgFromPicker, setShowDgFromPicker] = useState(false);
@@ -52,7 +52,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
 
   // ── Trip Filters ──
   const [tripDateFrom, setTripDateFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(0,0,0,0); return d;
+    const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(0, 0, 0, 0); return d;
   });
   const [tripDateTo, setTripDateTo] = useState(new Date());
   const [showTripFromPicker, setShowTripFromPicker] = useState(false);
@@ -114,8 +114,8 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           lat: parseFloat(updatedDev.motion_lat) || 0,
           lng: parseFloat(updatedDev.motion_lon) || 0,
           address: updatedDev.address,
-          speed: isMoving ? 10 : 0,
-          speedKmh: isMoving ? 36 : 0,
+          speed: updatedDev.speed || 0,
+          speedKmh: updatedDev.speedKmh || updatedDev.speed || 0,
           fixTime: updatedDev.position_time,
           ignition: updatedDev.ignition_status,
           charge: isCharging,
@@ -151,12 +151,12 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     setTripsLoading(true);
     try {
       const start = moment(tripDateFrom).format('YYYY-MM-DD HH:mm:ss');
-      const end   = moment(tripDateTo).format('YYYY-MM-DD HH:mm:ss');
+      const end = moment(tripDateTo).format('YYYY-MM-DD HH:mm:ss');
       const data = await getTripsReport(device.id, start, end);
 
       // Client-side date filter
       const fromMs = moment(tripDateFrom).valueOf();
-      const toMs   = moment(tripDateTo).valueOf();
+      const toMs = moment(tripDateTo).valueOf();
       const timeFiltered = (data || []).filter(trip => {
         const t = moment(trip.startTime).valueOf();
         return t >= fromMs && t <= toMs;
@@ -185,7 +185,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     setDgLoading(true);
     try {
       const from = moment(dgDateFrom).format('YYYY-MM-DD HH:mm:ss');
-      const to   = moment(dgDateTo).format('YYYY-MM-DD HH:mm:ss');
+      const to = moment(dgDateTo).format('YYYY-MM-DD HH:mm:ss');
       const rows = await fetchDgStatusLogs({
         device_id: device.id,
         dg_name: device.name,
@@ -200,7 +200,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
 
       // Client-side date filter
       const fromMs = moment(dgDateFrom).valueOf();
-      const toMs   = moment(dgDateTo).valueOf();
+      const toMs = moment(dgDateTo).valueOf();
 
       const filtered = (rows || []).filter(item => {
         const itemId = String(item.deviceid || item.device_id || '');
@@ -418,7 +418,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           </View>
           <View style={styles.profileHeaderMeta}>
             <Text style={styles.vehicleName}>{device.name}</Text>
-            <Text style={styles.imeiText}>IMEI: {device.iccid || device.uniqueId}</Text>
+            <Text style={styles.imeiText}>IMEI: {device.uniqueId || device.uniqueid}</Text>
             <View style={[styles.statusBadge, { backgroundColor: `${statusColor}15`, marginTop: 8 }]}>
               <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
               <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
@@ -513,7 +513,10 @@ const DeviceDetailScreen = ({ route, navigation }) => {
             <View style={styles.card}>
               <InfoRow label="Network Strength" value={rssi ? `${rssi}` : 'N/A'} />
               <InfoRow label="Battery Voltage" value={power != null ? `${power} V` : 'N/A'} />
-              <InfoRow label="Speed" value={`${device.speedKmh || 0} km/h`} />
+              <InfoRow label="DG Name" value={device.name || 'N/A'} />
+              <InfoRow label="IMEI / Unique ID" value={device.uniqueId || device.uniqueid || 'N/A'} />
+              {/* <InfoRow label="Distance Traveled" value={totalDistKm || '0 km'} /> */}
+              {/* <InfoRow label="Speed" value={`${device.speedKmh || 0} km/h`} /> */}
               <InfoRow label="Motion State" value={motion === true || (device.speedKmh || 0) > 2 ? 'Moving' : 'Stopped'} />
             </View>
           )}

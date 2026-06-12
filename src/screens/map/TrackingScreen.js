@@ -238,7 +238,7 @@ const TrackingScreen = ({ route, navigation }) => {
         </TouchableOpacity>
         <View style={styles.headerInfo}>
           <Text style={styles.headerTitle}>{device.name}</Text>
-          <Text style={styles.headerSubtitle}>{device.iccid || device.uniqueId || 'No IMEI'}</Text>
+          <Text style={styles.headerSubtitle}>{device.uniqueId || device.uniqueid || 'No IMEI'}</Text>
         </View>
         <TouchableOpacity
           style={[styles.followBtn, followMode && styles.followBtnActive]}

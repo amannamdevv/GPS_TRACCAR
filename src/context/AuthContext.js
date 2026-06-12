@@ -62,6 +62,8 @@ export const AuthProvider = ({ children }) => {
       'userToken', 'userInfo',
       'traccar_server', 'traccar_cookie',
       'traccar_email',  'traccar_pass',
+      'cached_alerts_data', 'cached_device_names',
+      'cached_deleted_alerts', 'cached_read_alerts',
     ]);
     setIsLoading(false);
   };

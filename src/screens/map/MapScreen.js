@@ -75,6 +75,12 @@ const MapScreen = ({ navigation, route }) => {
   const [mapLayer, setMapLayer] = useState('standard');
   const [followMode, setFollowMode] = useState(false);
 
+  const followModeRef = useRef(followMode);
+  useEffect(() => { followModeRef.current = followMode; }, [followMode]);
+
+  const selectedDeviceIdRef = useRef(selectedDeviceId);
+  useEffect(() => { selectedDeviceIdRef.current = selectedDeviceId; }, [selectedDeviceId]);
+
   // Bottom action panel animation
   const slideAnim = useRef(new Animated.Value(300)).current;
 
@@ -262,149 +268,154 @@ const MapScreen = ({ navigation, route }) => {
 
   // ─── DATA SYNC ──────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
-      if (isFetchingRef.current) return;
-      isFetchingRef.current = true;
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
 
-      try {
-        const data = await fetchDeviceList();
-        const devicesData = data.devices || [];
-
-        setDevices(devicesData);
-        const posMap = {};
-        const prevPosMap = prevPositionsRef.current;
-
-        // Build position objects with telemetry and address (fallback to previous address)
-        devicesData.forEach((device) => {
-          const prevPosForDevice = prevPosMap[device.id];
-          const pos = {
-            deviceId: device.id,
-            latitude: parseFloat(device.motion_lat) || 0,
-            longitude: parseFloat(device.motion_lon) || 0,
-            name: device.name || 'Unknown',
-            status: device.status || 'unknown',
-            motion_status: device.motion_status,
-            battery_level: device.battery_level,
-            dg_status: device.dg_status,
-            ignition_status: device.ignition_status,
-            battery_status: device.battery_status,
-            fixTime: device.position_time,
-            address: device.address || prevPosForDevice?.address || null,
-            speedKmh: device.speedKmh ?? device.speed ?? 0,
-            alarm: device.alarm ?? null,
-          };
-          posMap[device.id] = pos;
-        });
-
-        prevPositionsRef.current = posMap;
-        setPositions(posMap);
-
-        // If map is ready, send markers update
-        if (mapReady) {
-          sendToMap('UPDATE_MARKERS', { positions: Object.values(posMap) });
-          // Only auto-focus and show location on first load — don't reset user's view on every refresh
-          if (!initialFocusDoneRef.current) {
-            initialFocusDoneRef.current = true;
-            focusNearestDevice(Object.values(posMap));
-            // Auto-show user's current location blue dot
-            showMyLocation(true);
-          }
-        }
-
-        const now = Date.now();
-        // Placeholder for alarm fetching logic.
-        // Update lastAlarmsFetchRef to current time.
-        lastAlarmsFetchRef.current = now;
-      } catch (e) {
-        console.warn(e);
-      } finally {
-        isFetchingRef.current = false;
-        setLoading(false);
-      }
-    }, [mapReady]);
-
-    // Helper to compute haversine distance
-    const haversine = (lat1, lon1, lat2, lon2) => {
-      const toRad = (deg) => (deg * Math.PI) / 180;
-      const R = 6371; // km
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
-      return R * 2 * Math.asin(Math.sqrt(a));
-    };
-
-const focusNearestDevice = (positionsArray) => {
-  Geolocation.getCurrentPosition(
-    (loc) => {
-      const { latitude: myLat, longitude: myLon } = loc.coords;
-      let nearest = null;
-      let minDist = Infinity;
-      positionsArray.forEach((p) => {
-        if (!p.latitude || !p.longitude) return;
-        const d = haversine(myLat, myLon, p.latitude, p.longitude);
-        if (d < minDist) {
-          minDist = d;
-          nearest = p;
-        }
-      });
-      if (nearest) {
-        sendToMap('FOCUS_DEVICE', { lat: nearest.latitude, lng: nearest.longitude });
-      }
-    },
-    (err) => {
-      // Retrying with standard accuracy on timeout/failure
-      Geolocation.getCurrentPosition(
-        (loc) => {
-          const { latitude: myLat, longitude: myLon } = loc.coords;
-          let nearest = null;
-          let minDist = Infinity;
-          positionsArray.forEach((p) => {
-            if (!p.latitude || !p.longitude) return;
-            const d = haversine(myLat, myLon, p.latitude, p.longitude);
-            if (d < minDist) {
-              minDist = d;
-              nearest = p;
-            }
-          });
-          if (nearest) {
-            sendToMap('FOCUS_DEVICE', { lat: nearest.latitude, lng: nearest.longitude });
-          }
-        },
-        (err2) => {
-          console.log('[Geolocation] Standard accuracy also failed:', err2.message);
-        },
-        { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
-      );
-    },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 }
-  );
-};
-
-useEffect(() => {
-  const requestNotifPermission = async () => {
     try {
-      if (Platform.OS === 'android') {
-        if (Platform.Version >= 33) {
-          await PermissionsAndroid.request(
-            PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-            {
-              title: 'Notification Permission',
-              message: 'Vehicle alerts ke liye notification allow karo',
-              buttonPositive: 'Allow',
-              buttonNegative: 'Deny',
-            }
-          );
-        }
-        await notifee.requestPermission().catch(() => {});
-      }
-    } catch (e) {
-      console.log('Permission error:', e);
-    }
-  };
-  requestNotifPermission();
+      const data = await fetchDeviceList();
+      const devicesData = data.devices || [];
 
-  const unsubNet = NetInfo.addEventListener(state => setIsOnline(state.isConnected));
-  return () => { unsubNet(); };
-}, []);
+      setDevices(devicesData);
+      const posMap = {};
+      const prevPosMap = prevPositionsRef.current;
+
+      // Build position objects with telemetry and address (fallback to previous address)
+      devicesData.forEach((device) => {
+        const prevPosForDevice = prevPosMap[device.id];
+        const pos = {
+          deviceId: device.id,
+          latitude: parseFloat(device.motion_lat) || 0,
+          longitude: parseFloat(device.motion_lon) || 0,
+          name: device.name || 'Unknown',
+          status: device.status || 'unknown',
+          motion_status: device.motion_status,
+          battery_level: device.battery_level,
+          dg_status: device.dg_status,
+          ignition_status: device.ignition_status,
+          battery_status: device.battery_status,
+          fixTime: device.position_time,
+          address: device.address || prevPosForDevice?.address || null,
+          speedKmh: device.speedKmh ?? device.speed ?? 0,
+          alarm: device.alarm ?? null,
+        };
+        posMap[device.id] = pos;
+      });
+
+      prevPositionsRef.current = posMap;
+      setPositions(posMap);
+
+      // If map is ready, send markers update
+      if (mapReady) {
+        sendToMap('UPDATE_MARKERS', { positions: Object.values(posMap) });
+        // Only auto-focus and show location on first load — don't reset user's view on every refresh
+        if (!initialFocusDoneRef.current) {
+          initialFocusDoneRef.current = true;
+          focusNearestDevice(Object.values(posMap));
+          // Auto-show user's current location blue dot
+          showMyLocation(true);
+        } else if (followModeRef.current && selectedDeviceIdRef.current) {
+          const selDev = posMap[selectedDeviceIdRef.current];
+          if (selDev && selDev.latitude && selDev.longitude) {
+            sendToMap('FOCUS_DEVICE', { lat: selDev.latitude, lng: selDev.longitude });
+          }
+        }
+      }
+
+      const now = Date.now();
+      // Placeholder for alarm fetching logic.
+      // Update lastAlarmsFetchRef to current time.
+      lastAlarmsFetchRef.current = now;
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      isFetchingRef.current = false;
+      setLoading(false);
+    }
+  }, [mapReady]);
+
+  // Helper to compute haversine distance
+  const haversine = (lat1, lon1, lat2, lon2) => {
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const R = 6371; // km
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.asin(Math.sqrt(a));
+  };
+
+  const focusNearestDevice = (positionsArray) => {
+    Geolocation.getCurrentPosition(
+      (loc) => {
+        const { latitude: myLat, longitude: myLon } = loc.coords;
+        let nearest = null;
+        let minDist = Infinity;
+        positionsArray.forEach((p) => {
+          if (!p.latitude || !p.longitude) return;
+          const d = haversine(myLat, myLon, p.latitude, p.longitude);
+          if (d < minDist) {
+            minDist = d;
+            nearest = p;
+          }
+        });
+        if (nearest) {
+          sendToMap('FOCUS_DEVICE', { lat: nearest.latitude, lng: nearest.longitude });
+        }
+      },
+      (err) => {
+        // Retrying with standard accuracy on timeout/failure
+        Geolocation.getCurrentPosition(
+          (loc) => {
+            const { latitude: myLat, longitude: myLon } = loc.coords;
+            let nearest = null;
+            let minDist = Infinity;
+            positionsArray.forEach((p) => {
+              if (!p.latitude || !p.longitude) return;
+              const d = haversine(myLat, myLon, p.latitude, p.longitude);
+              if (d < minDist) {
+                minDist = d;
+                nearest = p;
+              }
+            });
+            if (nearest) {
+              sendToMap('FOCUS_DEVICE', { lat: nearest.latitude, lng: nearest.longitude });
+            }
+          },
+          (err2) => {
+            console.log('[Geolocation] Standard accuracy also failed:', err2.message);
+          },
+          { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 10000 }
+    );
+  };
+
+  useEffect(() => {
+    const requestNotifPermission = async () => {
+      try {
+        if (Platform.OS === 'android') {
+          if (Platform.Version >= 33) {
+            await PermissionsAndroid.request(
+              PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+              {
+                title: 'Notification Permission',
+                message: 'Vehicle alerts ke liye notification allow karo',
+                buttonPositive: 'Allow',
+                buttonNegative: 'Deny',
+              }
+            );
+          }
+          await notifee.requestPermission().catch(() => { });
+        }
+      } catch (e) {
+        console.log('Permission error:', e);
+      }
+    };
+    requestNotifPermission();
+
+    const unsubNet = NetInfo.addEventListener(state => setIsOnline(state.isConnected));
+    return () => { unsubNet(); };
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -445,7 +456,7 @@ useEffect(() => {
           focusDevice(dev);
         }
       }
-    } catch (e) {}
+    } catch (e) { }
   };
 
   const focusDevice = async (device) => {
@@ -502,7 +513,7 @@ useEffect(() => {
               noPan: !fitAll
             });
           },
-          () => {},
+          () => { },
           { enableHighAccuracy: false, timeout: 15000, maximumAge: 30000 }
         );
       },
@@ -656,7 +667,7 @@ useEffect(() => {
           <View style={styles.panelHeader}>
             <View style={styles.panelTitleContainer}>
               <Text style={styles.panelTitle}>{selectedDevice.name}</Text>
-              <Text style={styles.panelSubtitle}>{selectedDevice.iccid || 'No IMEI'}</Text>
+              <Text style={styles.panelSubtitle}>{selectedDevice.uniqueId || selectedDevice.uniqueid || 'No IMEI'}</Text>
             </View>
             <TouchableOpacity style={styles.closeBtn} onPress={() => setSelectedDeviceId(null)}>
               <Icon name="close" size={20} color="#64748b" />
@@ -665,10 +676,7 @@ useEffect(() => {
 
           {/* Quick status bar inside panel */}
           <View style={styles.statusMetricsRow}>
-            <View style={styles.metricItem}>
-              <Icon name="speedometer" size={14} color="#64748b" />
-              <Text style={styles.metricText}>{selectedDevice.speedKmh || 0} km/h</Text>
-            </View>
+
             <View style={styles.metricItem}>
               <Icon name="battery" size={14} color="#10b981" />
               <Text style={styles.metricText}>{selectedDevice.battery_level != null ? `${selectedDevice.battery_level}%` : '0%'}</Text>

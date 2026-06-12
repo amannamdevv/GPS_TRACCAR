@@ -1,19 +1,108 @@
-import React, { useContext, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Switch, TouchableOpacity, Linking } from 'react-native';
+import React, { useContext, useState, useEffect } from 'react';
+import { View, Text, StyleSheet, ScrollView, Switch, TouchableOpacity, Linking, ActivityIndicator } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import notifee from '@notifee/react-native';
 import Header from '../../components/Header';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AuthContext } from '../../context/AuthContext';
+import AlertService from '../../services/AlertNotificationService';
 
 const SettingsScreen = ({ navigation }) => {
   const { userInfo, logout } = useContext(AuthContext);
-  
-  const [distanceUnit, setDistanceUnit] = useState(false); // false = km, true = miles
-  const [speedUnit, setSpeedUnit] = useState(false); // false = km/h, true = mph
-  const [timeFormat, setTimeFormat] = useState(false); // false = 24h, true = 12h
+
+  const [distanceUnit, setDistanceUnit] = useState(false);
+  const [speedUnit, setSpeedUnit] = useState(false);
+  const [timeFormat, setTimeFormat] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [pushNotif, setPushNotif] = useState(true);
   const [geofenceNotif, setGeofenceNotif] = useState(true);
   const [speedNotif, setSpeedNotif] = useState(true);
+  const [bgAlerts, setBgAlerts] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const stored = await AsyncStorage.getItem('user_settings');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed.distanceUnit !== undefined) setDistanceUnit(parsed.distanceUnit);
+          if (parsed.speedUnit !== undefined) setSpeedUnit(parsed.speedUnit);
+          if (parsed.timeFormat !== undefined) setTimeFormat(parsed.timeFormat);
+          if (parsed.darkMode !== undefined) setDarkMode(parsed.darkMode);
+          if (parsed.pushNotif !== undefined) setPushNotif(parsed.pushNotif);
+          if (parsed.geofenceNotif !== undefined) setGeofenceNotif(parsed.geofenceNotif);
+          if (parsed.speedNotif !== undefined) setSpeedNotif(parsed.speedNotif);
+          if (parsed.bgAlerts !== undefined) setBgAlerts(parsed.bgAlerts);
+
+          // ✅ FIX: parsed value seedha use karo, state pe depend mat karo
+          const shouldRunAlerts = parsed.bgAlerts !== false;
+          const notifEnabled = parsed.pushNotif !== false;
+
+          if (shouldRunAlerts && notifEnabled) {
+            AlertService.start();
+          } else {
+            AlertService.stop();
+          }
+        } else {
+          // Pehli baar app open — default mein start karo
+          AlertService.start();
+        }
+      } catch (e) {
+        console.warn('Failed to load settings', e);
+        AlertService.start(); // error pe bhi start karo
+        } finally {
+          setIsLoading(false);
+          // Ensure permission is requested and alerts always run
+          (async () => {
+            try {
+              await notifee.requestPermission();
+            } catch (e) {
+              console.warn('Permission request failed', e);
+            }
+            AlertService.start();
+          })();
+        }
+    };
+    loadSettings();
+  }, []);
+
+  const saveSetting = async (key, value) => {
+    try {
+      const stored = await AsyncStorage.getItem('user_settings');
+      let parsed = stored ? JSON.parse(stored) : {};
+      parsed[key] = value;
+      await AsyncStorage.setItem('user_settings', JSON.stringify(parsed));
+    } catch (e) {
+      console.warn('Failed to save setting', e);
+    }
+  };
+
+  const handleToggle = async (key, value, setter) => {
+    setter(value);
+    saveSetting(key, value);
+
+    if (key === 'pushNotif') {
+      if (value === true) {
+        try {
+          await notifee.requestPermission();
+          if (bgAlerts) {
+            AlertService.start();
+          }
+        } catch (e) {
+          console.warn('Failed to request permission or start service', e);
+        }
+      } else {
+        AlertService.stop();
+      }
+    } else if (key === 'bgAlerts') {
+      if (value === true) {
+        AlertService.start();
+      } else {
+        AlertService.stop();
+      }
+    }
+  };
 
   const SectionHeader = ({ title }) => (
     <Text style={styles.sectionHeader}>{title}</Text>
@@ -30,32 +119,42 @@ const SettingsScreen = ({ navigation }) => {
     </View>
   );
 
+  const initials = userInfo?.name
+    ? userInfo.name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()
+    : 'U';
+
+  if (isLoading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#1565C0" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <Header title="Settings" navigation={navigation} />
-      
-      <ScrollView>
-        <View style={styles.profileSection}>
+
+      <ScrollView contentContainerStyle={styles.scroll}>
+
+        {/* ── Profile Card ── */}
+        <View style={styles.profileCard}>
           <View style={styles.avatarContainer}>
-            <Text style={styles.avatarText}>
-              {userInfo?.name ? userInfo.name.charAt(0) : 'U'}
-            </Text>
+            <Text style={styles.avatarText}>{initials}</Text>
           </View>
           <View style={styles.profileInfo}>
             <Text style={styles.profileName}>{userInfo?.name || 'User'}</Text>
             <Text style={styles.profileEmail}>{userInfo?.email || 'user@example.com'}</Text>
+
           </View>
-          <TouchableOpacity style={styles.editBtn}>
-            <Text style={styles.editBtnText}>Edit</Text>
-          </TouchableOpacity>
         </View>
 
         <SectionHeader title="WEBSITE" />
         <View style={styles.card}>
           <TouchableOpacity onPress={() => Linking.openURL('https://gps.shrotitele.com/')}>
-            <SettingRow 
-              icon="web" 
-              title="Website Link" 
+            <SettingRow
+              icon="web"
+              title="Website Link"
               subtitle="gps.shrotitele.com"
               rightElement={
                 <View style={styles.statusBadge}>
@@ -69,85 +168,73 @@ const SettingsScreen = ({ navigation }) => {
 
         <SectionHeader title="PREFERENCES" />
         <View style={styles.card}>
-          <SettingRow 
-            icon="map-marker-distance" 
-            title="Distance Unit" 
+          <SettingRow
+            icon="map-marker-distance"
+            title="Distance Unit"
             subtitle={distanceUnit ? "Miles" : "Kilometers"}
-            rightElement={<Switch value={distanceUnit} onValueChange={setDistanceUnit} />}
+            rightElement={<Switch value={distanceUnit} onValueChange={(val) => handleToggle('distanceUnit', val, setDistanceUnit)} trackColor={{ true: '#10b981', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
           />
           <View style={styles.divider} />
-          <SettingRow 
-            icon="speedometer" 
-            title="Speed Unit" 
+          <SettingRow
+            icon="speedometer"
+            title="Speed Unit"
             subtitle={speedUnit ? "mph" : "km/h"}
-            rightElement={<Switch value={speedUnit} onValueChange={setSpeedUnit} />}
+            rightElement={<Switch value={speedUnit} onValueChange={(val) => handleToggle('speedUnit', val, setSpeedUnit)} trackColor={{ true: '#10b981', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
           />
           <View style={styles.divider} />
-          <SettingRow 
-            icon="clock-outline" 
-            title="Time Format" 
-            subtitle={timeFormat ? "12 Hour" : "24 Hour"}
-            rightElement={<Switch value={timeFormat} onValueChange={setTimeFormat} />}
-          />
-          <View style={styles.divider} />
-          <SettingRow 
-            icon="theme-light-dark" 
-            title="Dark Mode" 
-            rightElement={<Switch value={darkMode} onValueChange={setDarkMode} />}
-          />
-          <View style={styles.divider} />
-          <SettingRow 
-            icon="translate" 
-            title="Language" 
-            rightElement={
-              <View style={styles.selectorRow}>
-                <Text style={styles.selectorText}>English</Text>
-                <Icon name="chevron-right" size={20} color="#757575" />
-              </View>
-            }
-          />
+          <TouchableOpacity>
+            <SettingRow
+              icon="translate"
+              title="Language"
+              rightElement={
+                <View style={styles.selectorRow}>
+                  <Text style={styles.selectorText}>English</Text>
+                  <Icon name="chevron-right" size={20} color="#cbd5e1" />
+                </View>
+              }
+            />
+          </TouchableOpacity>
         </View>
 
         <SectionHeader title="NOTIFICATIONS" />
         <View style={styles.card}>
-          <SettingRow 
-            icon="bell-ring-outline" 
-            title="Push Notifications" 
-            rightElement={<Switch value={pushNotif} onValueChange={setPushNotif} />}
+          <SettingRow
+            icon="bell-ring-outline"
+            title="Push Notifications"
+            rightElement={<Switch value={pushNotif} onValueChange={(val) => handleToggle('pushNotif', val, setPushNotif)} trackColor={{ true: '#1565C0', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
           />
           <View style={styles.divider} />
-          <SettingRow 
-            icon="vector-polygon" 
-            title="Geofence Alerts" 
-            rightElement={<Switch value={geofenceNotif} onValueChange={setGeofenceNotif} />}
+          <SettingRow
+            icon="bell-sleep-outline"
+            title="Background Alerts"
+            subtitle="Run alert service in background even when app closed"
+            rightElement={<Switch value={bgAlerts} onValueChange={(val) => handleToggle('bgAlerts', val, setBgAlerts)} trackColor={{ true: '#1565C0', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
           />
           <View style={styles.divider} />
-          <SettingRow 
-            icon="speedometer" 
-            title="Speed Alerts" 
-            rightElement={<Switch value={speedNotif} onValueChange={setSpeedNotif} />}
+          <SettingRow
+            icon="speedometer"
+            title="Speed Alerts"
+            rightElement={<Switch value={speedNotif} onValueChange={(val) => handleToggle('speedNotif', val, setSpeedNotif)} trackColor={{ true: '#1565C0', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
           />
         </View>
 
         <SectionHeader title="ABOUT" />
         <View style={styles.card}>
-          <SettingRow 
-            icon="information-outline" 
-            title="App Version" 
+          <SettingRow
+            icon="information-outline"
+            title="App Version"
             rightElement={<Text style={styles.versionText}>1.0.0</Text>}
           />
           <View style={styles.divider} />
           <TouchableOpacity>
-            <SettingRow 
-              icon="star-outline" 
-              title="Rate App" 
-              rightElement={<Icon name="chevron-right" size={20} color="#757575" />}
+            <SettingRow
+              icon="star-outline"
+              title="Rate App"
+              rightElement={<Icon name="chevron-right" size={20} color="#cbd5e1" />}
             />
           </TouchableOpacity>
         </View>
 
-
-        
         <View style={{ height: 40 }} />
       </ScrollView>
     </View>
@@ -157,65 +244,99 @@ const SettingsScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: '#f8fafc',
   },
-  profileSection: {
+  scroll: {
+    padding: 16,
+  },
+
+  // ── Profile Card ──────────────────────────────────────────
+  profileCard: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     padding: 20,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
   },
   avatarContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#1565C0',
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#EEF2FF',
     justifyContent: 'center',
     alignItems: 'center',
+    marginRight: 16,
+    borderWidth: 2,
+    borderColor: '#C7D2FE',
   },
   avatarText: {
-    color: '#FFFFFF',
-    fontSize: 24,
-    fontWeight: 'bold',
+    color: '#4338CA',
+    fontSize: 22,
+    fontWeight: '700',
   },
   profileInfo: {
     flex: 1,
-    marginLeft: 16,
   },
   profileName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#212121',
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
   },
   profileEmail: {
-    fontSize: 14,
-    color: '#757575',
-    marginTop: 4,
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 8,
   },
-  editBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#E3F2FD',
+  roleBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#f0fdf4',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
     borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#bbf7d0',
   },
-  editBtnText: {
-    color: '#1565C0',
-    fontWeight: 'bold',
+  roleDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+    marginRight: 5,
   },
+  roleBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  // ─────────────────────────────────────────────────────────
+
   sectionHeader: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#757575',
-    marginLeft: 16,
-    marginTop: 20,
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#64748b',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginLeft: 8,
+    marginTop: 24,
     marginBottom: 8,
   },
   card: {
     backgroundColor: '#FFFFFF',
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    borderColor: '#EEEEEE',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    overflow: 'hidden',
+    elevation: 2,
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.03,
+    shadowRadius: 8,
   },
   settingRow: {
     flexDirection: 'row',
@@ -229,66 +350,52 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   settingTitle: {
-    fontSize: 16,
-    color: '#212121',
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
   },
   settingSubtitle: {
     fontSize: 12,
-    color: '#757575',
+    color: '#64748b',
     marginTop: 2,
   },
   divider: {
     height: 1,
-    backgroundColor: '#EEEEEE',
+    backgroundColor: '#e2e8f0',
     marginLeft: 56,
   },
   statusBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E8F5E9',
-    paddingHorizontal: 8,
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
   },
   statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#4CAF50',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
     marginRight: 6,
   },
   statusText: {
-    color: '#4CAF50',
-    fontSize: 12,
-    fontWeight: 'bold',
+    color: '#059669',
+    fontSize: 11,
+    fontWeight: '700',
   },
   selectorRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   selectorText: {
-    color: '#757575',
+    color: '#64748b',
     marginRight: 4,
+    fontWeight: '500',
   },
   versionText: {
-    color: '#757575',
-  },
-  logoutBtn: {
-    flexDirection: 'row',
-    backgroundColor: '#F44336',
-    marginHorizontal: 16,
-    marginTop: 30,
-    paddingVertical: 14,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 2,
-  },
-  logoutBtnText: {
-    color: '#FFFFFF',
-    fontWeight: 'bold',
-    fontSize: 16,
-    letterSpacing: 1,
+    color: '#64748b',
+    fontWeight: '600',
   },
 });
 

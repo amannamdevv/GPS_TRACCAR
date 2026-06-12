@@ -122,7 +122,7 @@ const LoginScreen = ({ navigation }) => {
           </TouchableOpacity>
 
           {/* Register link */}
-          <TouchableOpacity
+          {/* <TouchableOpacity
             style={styles.registerLink}
             onPress={() => navigation.navigate('Register')}
           >
@@ -130,7 +130,7 @@ const LoginScreen = ({ navigation }) => {
               Don&apos;t have an account?{' '}
               <Text style={styles.registerTextBold}>Register</Text>
             </Text>
-          </TouchableOpacity>
+          </TouchableOpacity> */}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>

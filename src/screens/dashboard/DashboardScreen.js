@@ -197,78 +197,6 @@ const DonutChart = ({ total, dataEntries, title, activeFilter, onFilterSelect })
   );
 };
 
-// ─── TREND LINE CHART (WEEKLY TREND) ─────────────────────────────────────────
-const TrendLineChart = () => {
-  const chartWidth = width - 40; // padding horizontal 20
-  const chartHeight = 160;
-  const paddingTop = 20;
-  const paddingBottom = 30;
-  const paddingHorizontal = 10;
-  const innerWidth = chartWidth - paddingHorizontal * 2;
-  const innerHeight = chartHeight - paddingTop - paddingBottom;
-  
-  // Weekly Dummy Data for presentation as requested
-  const data = [
-    { day: 'Mon', m: 45, i: 30 },
-    { day: 'Tue', m: 52, i: 35 },
-    { day: 'Wed', m: 48, i: 40 },
-    { day: 'Thu', m: 65, i: 55 },
-    { day: 'Fri', m: 58, i: 45 },
-    { day: 'Sat', m: 75, i: 60 },
-    { day: 'Sun', m: 68, i: 58 },
-  ];
-  
-  const maxVal = 100;
-  
-  const getX = (index) => paddingHorizontal + (index * (innerWidth / (data.length - 1)));
-  const getY = (val) => paddingTop + innerHeight - ((val / maxVal) * innerHeight);
-  
-  const motionPoints = data.map((d, i) => `${getX(i)},${getY(d.m)}`).join(' ');
-  const ignitionPoints = data.map((d, i) => `${getX(i)},${getY(d.i)}`).join(' ');
-
-  return (
-    <View style={styles.lineChartCard}>
-      <View style={styles.lineChartHeader}>
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <Icon name="chart-line-variant" size={15} color="#64748b" style={{ marginRight: 6 }} />
-          <Text style={styles.lineChartTitle}>Weekly Activity Trend</Text>
-        </View>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981' }} />
-            <Text style={{ fontSize: 10, color: '#64748b', fontWeight: '600' }}>Motion</Text>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#f59e0b' }} />
-            <Text style={{ fontSize: 10, color: '#64748b', fontWeight: '600' }}>Ignition</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={{ alignItems: 'center', marginTop: 10 }}>
-        <Svg width={chartWidth} height={chartHeight}>
-          {/* Grid lines */}
-          {[0, 0.5, 1].map(r => (
-            <Line key={r} x1={paddingHorizontal} y1={paddingTop + innerHeight * r} x2={chartWidth - paddingHorizontal} y2={paddingTop + innerHeight * r} stroke="#f1f5f9" strokeWidth="1.5" strokeDasharray="4 4" />
-          ))}
-          
-          {/* Paths */}
-          <Polyline points={motionPoints} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-          <Polyline points={ignitionPoints} fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-          
-          {/* Data Points */}
-          {data.map((d, i) => (
-            <React.Fragment key={i}>
-              <Circle cx={getX(i)} cy={getY(d.m)} r="3.5" fill="#10b981" stroke="#fff" strokeWidth="1.5" />
-              <Circle cx={getX(i)} cy={getY(d.i)} r="3.5" fill="#f59e0b" stroke="#fff" strokeWidth="1.5" />
-              <SvgText x={getX(i)} y={chartHeight - 10} fontSize="10" fill="#94a3b8" fontWeight="600" textAnchor="middle">{d.day}</SvgText>
-            </React.Fragment>
-          ))}
-        </Svg>
-      </View>
-    </View>
-  );
-};
 
 // ─── DASHBOARD SCREEN ─────────────────────────────────────────────────────────
 const DashboardScreen = ({ navigation }) => {
@@ -356,17 +284,17 @@ const DashboardScreen = ({ navigation }) => {
       dgOff: baseDevices.length - dgOn,
       moving,
       stopped: baseDevices.length - moving,
-  };
+    };
   }, [baseDevices, isDgOn, isMoving]);
 
   // ─── CHART DATA: reflects baseDevices breakdown ──────────────────────────
   const chartTotal = baseDevices.length;
   const chartEntries = useMemo(() => {
     if (primaryFilter === 'all') {
-      // Show only Active and Inactive counts for Total Devices
+      // Show only Online and Offline counts for Total Devices
       return [
-        { label: 'Active', val: globalMetrics.online, color: '#10b981', filterKey: 'online' },
-        { label: 'Inactive', val: globalMetrics.offline, color: '#ef4444', filterKey: 'offline' },
+        { label: 'Online', val: globalMetrics.online, color: '#10b981', filterKey: 'online' },
+        { label: 'Offline', val: globalMetrics.offline, color: '#ef4444', filterKey: 'offline' },
       ];
     }
     if (primaryFilter === 'online') {
@@ -407,8 +335,8 @@ const DashboardScreen = ({ navigation }) => {
   // ─── STAT CARDS CONFIG ──────────────────────────────────────────────────────
   const primaryCards = [
     { key: 'all', label: 'Total Devices', val: globalMetrics.total, icon: 'devices', iconBg: 'rgba(21,101,192,0.1)', iconColor: '#1565C0' },
-    { key: 'online', label: 'Active', val: globalMetrics.online, icon: 'check-circle', iconBg: 'rgba(16,185,129,0.1)', iconColor: '#10b981' },
-    { key: 'offline', label: 'Inactive', val: globalMetrics.offline, icon: 'close-circle', iconBg: 'rgba(239,68,68,0.1)', iconColor: '#ef4444' },
+    { key: 'online', label: 'Online', val: globalMetrics.online, icon: 'check-circle', iconBg: 'rgba(16,185,129,0.1)', iconColor: '#10b981' },
+    { key: 'offline', label: 'Offline', val: globalMetrics.offline, icon: 'close-circle', iconBg: 'rgba(239,68,68,0.1)', iconColor: '#ef4444' },
   ];
 
   // Secondary cards: counts scoped to baseDevices (respects primaryFilter)
@@ -428,7 +356,7 @@ const DashboardScreen = ({ navigation }) => {
   const renderHeader = () => (
     <View style={styles.statsContainer}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>Home / Devices Overview</Text>
+        <Text style={[styles.sectionTitle, { marginBottom: 0 }]}> Devices Overview</Text>
         <View style={styles.liveTimerBadge}>
           <Icon name="clock-outline" size={14} color="#1565C0" />
           <Text style={styles.liveTimerText}>
@@ -477,34 +405,15 @@ const DashboardScreen = ({ navigation }) => {
           dataEntries={chartEntries}
         />
       )}
-      
-      {/* ── Line Chart ── */}
-      {primaryFilter !== 'offline' && (
-        <TrendLineChart />
-      )}
-      
-      {primaryFilter === 'online' && (
-        <View style={styles.secondaryRow}>
-          {secondaryCards.map(c => (
-            <TouchableOpacity
-              key={c.key}
-              style={[styles.secondaryCard, secondaryFilter === c.key && styles.secondaryCardActive]}
-              onPress={() => handleSecondaryFilter(c.key)}
-              activeOpacity={0.8}
-            >
-              <Icon name={c.icon} size={18} color={c.color} />
-              <Text style={styles.secondaryVal}>{c.val}</Text>
-              <Text style={styles.secondaryLabel}>{c.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
+
+
+
 
       {/* Table header with filter chips */}
       <View style={styles.tableHeader}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <Text style={styles.tableTitle}>
-            {primaryFilter === 'all' ? 'All Devices' : primaryFilter === 'online' ? 'Active Devices' : 'Inactive Devices'}
+            {primaryFilter === 'all' ? 'All Devices' : primaryFilter === 'online' ? 'Online Devices' : 'Offline Devices'}
           </Text>
           <View style={styles.badge}>
             <Text style={styles.badgeText}>{filteredDevices.length} items</Text>

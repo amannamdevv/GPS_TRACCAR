@@ -42,6 +42,18 @@ const DgStatusLogScreen = ({ route, navigation }) => {
   // Device dropdown selection lists state
   const [devices, setDevices] = useState([]);
   const [selectedDev, setSelectedDev] = useState(null);
+  // Search query for device picker filter
+  const [searchQuery, setSearchQuery] = useState('');
+  // Filtered device list based on search query (name, uniqueid, iccid, id)
+  const filteredDevices = devices.filter(d => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return true;
+    const name = (d.name || '').toLowerCase();
+    const uid = (d.uniqueid || '').toLowerCase();
+    const iccid = (d.iccid || '').toLowerCase();
+    const idStr = String(d.id);
+    return name.includes(q) || uid.includes(q) || iccid.includes(q) || idStr.includes(q);
+  });
 
   // Sync selected device with filter states
   useEffect(() => {
@@ -427,7 +439,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
               </View>
             ) : (
               <View style={styles.inputWrapFull}>
-                <Text style={styles.inputLabel}>Select Vehicle / Device</Text>
+                <Text style={styles.inputLabel}>Select DG / Device</Text>
                 <TouchableOpacity
                   style={styles.selector}
                   onPress={() => setShowDevPicker(!showDevPicker)}
@@ -441,6 +453,14 @@ const DgStatusLogScreen = ({ route, navigation }) => {
 
                 {showDevPicker && (
                   <ScrollView nestedScrollEnabled={true} style={styles.pickerDropdown}>
+                    {/* Search input */}
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Search devices..."
+                      placeholderTextColor="#64748b"
+                      value={searchQuery}
+                      onChangeText={text => setSearchQuery(text)}
+                    />
                     <TouchableOpacity
                       style={[styles.pickerItem, !selectedDev && styles.pickerItemActive]}
                       onPress={() => {
@@ -456,7 +476,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
                       </Text>
                     </TouchableOpacity>
 
-                    {devices.map((d) => {
+                    {filteredDevices.map((d) => {
                       const isSelected = selectedDev?.id === d.id;
                       return (
                         <TouchableOpacity

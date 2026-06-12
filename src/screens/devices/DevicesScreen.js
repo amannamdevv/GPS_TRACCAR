@@ -133,7 +133,7 @@ const DevicesScreen = ({ navigation }) => {
       {loading && !refreshing && (
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#1565C0" />
-          <Text style={styles.loadingText}>Synchronizing fleet devices...</Text>
+          <Text style={styles.loadingText}>Synchronizing DG devices...</Text>
         </View>
       )}
 
@@ -165,7 +165,7 @@ const DevicesScreen = ({ navigation }) => {
           ListEmptyComponent={
             <View style={styles.empty}>
               <Icon name="car-off" size={48} color="#cbd5e1" />
-              <Text style={styles.emptyText}>No vehicles match the selected criteria</Text>
+              <Text style={styles.emptyText}>No DG match the selected criteria</Text>
             </View>
           }
         />

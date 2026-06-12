@@ -86,7 +86,7 @@ const DeviceCard = ({ device, onPress }) => {
           </View>
           <View style={styles.titleContainer}>
             <Text style={styles.deviceName} numberOfLines={1}>{device.name || 'Unknown Vehicle'}</Text>
-            <Text style={styles.deviceId}>{device.iccid || device.uniqueId || 'No IMEI'}</Text>
+            <Text style={styles.deviceId}>{device.uniqueId || device.uniqueid || 'No IMEI'}</Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: `${statusColor}15` }]}>
             <View style={[styles.statusDot, { backgroundColor: statusColor }]} />

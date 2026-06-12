@@ -13,8 +13,11 @@ const ALERT_MAPPING = {
   vibration: 'Vibration Detected',
   ignitionOn: 'DG ON',
   ignitionOff: 'DG OFF',
-  motionStart: 'Motion Started',
-  motionStop: 'Motion Stopped',
+  deviceMoving: 'DG Moving',
+  deviceStopped: 'DG Stopped',
+  // backward compatibility for older alerts
+  motionStart: 'DG Moving',
+  motionStop: 'DG Stopped',
 };
 
 const AlertDetailsScreen = ({ route, navigation }) => {
@@ -95,7 +98,7 @@ const AlertDetailsScreen = ({ route, navigation }) => {
               try {
                 const fallbackAddr = await reverseGeocode(dLat, dLng);
                 setAddress(fallbackAddr || 'Address Not Available');
-              } catch (_) {}
+              } catch (_) { }
             }
           }
         }
@@ -146,16 +149,26 @@ const AlertDetailsScreen = ({ route, navigation }) => {
         <View style={styles.row}>
           <Icon name="car" size={18} color="#64748b" style={styles.icon} />
           <View style={styles.infoMeta}>
-            <Text style={styles.label}>Vehicle Name</Text>
-            <Text style={styles.value}>{device?.name || `Device ID: ${alert.deviceid || alert.deviceId}`}</Text>
+            <Text style={styles.label}>DG Name</Text>
+                        <Text style={styles.value}>{device?.name ?? 'N/A'}</Text>
           </View>
         </View>
+
+        {device?.uniqueid && (
+          <View style={styles.row}>
+            <Icon name="barcode-scan" size={18} color="#64748b" style={styles.icon} />
+            <View style={styles.infoMeta}>
+              <Text style={styles.label}>IMEI / Unique ID</Text>
+              <Text style={styles.value}>{device.uniqueid}</Text>
+            </View>
+          </View>
+        )}
 
         {device?.iccid && (
           <View style={styles.row}>
             <Icon name="barcode-scan" size={18} color="#64748b" style={styles.icon} />
             <View style={styles.infoMeta}>
-              <Text style={styles.label}>IMEI / Unique ID</Text>
+              <Text style={styles.label}>ICCID</Text>
               <Text style={styles.value}>{device.iccid}</Text>
             </View>
           </View>
