@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-
+import { AuthContext } from '../context/AuthContext';
 // Services
 import AlertNotificationService from '../services/AlertNotificationService';
 import UpdateChecker from '../services/UpdateChecker';
@@ -68,15 +68,17 @@ const MeStack = () => (
 
 // ─── MAIN TAB NAVIGATOR ──────────────────────────────────────────────────────
 const MainTabNavigator = () => {
+  const { userToken, isLoading } = React.useContext(AuthContext);
   useEffect(() => {
-    // Start services only when the user is authenticated and the main tabs are loaded
-    AlertNotificationService.start();
-    UpdateChecker.checkForUpdate();
-    
-    return () => {
+    // Start services only when the user is authenticated and auth restoration is complete
+    if (!isLoading && userToken) {
+      AlertNotificationService.start();
+      UpdateChecker.checkForUpdate();
+    } else {
       AlertNotificationService.stop();
-    };
-  }, []);
+    }
+    // Cleanup not needed as stop is handled on token change
+  }, [isLoading, userToken]);
 
   return (
     <Tab.Navigator

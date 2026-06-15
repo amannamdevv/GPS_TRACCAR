@@ -451,7 +451,6 @@ const DeviceDetailScreen = ({ route, navigation }) => {
         <View style={styles.segmentTabBar}>
           {[
             { key: 'LOCATION', label: 'Map' },
-            { key: 'SENSORS', label: 'Sensors' },
             { key: 'TRIPS', label: 'Trips' },
             { key: 'DG_REPORT', label: 'DG Report' },
           ].map(seg => (
@@ -509,17 +508,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
             </View>
           )}
 
-          {activeSegment === 'SENSORS' && (
-            <View style={styles.card}>
-              <InfoRow label="Network Strength" value={rssi ? `${rssi}` : 'N/A'} />
-              <InfoRow label="Battery Voltage" value={power != null ? `${power} V` : 'N/A'} />
-              <InfoRow label="DG Name" value={device.name || 'N/A'} />
-              <InfoRow label="IMEI / Unique ID" value={device.uniqueId || device.uniqueid || 'N/A'} />
-              {/* <InfoRow label="Distance Traveled" value={totalDistKm || '0 km'} /> */}
-              {/* <InfoRow label="Speed" value={`${device.speedKmh || 0} km/h`} /> */}
-              <InfoRow label="Motion State" value={motion === true || (device.speedKmh || 0) > 2 ? 'Moving' : 'Stopped'} />
-            </View>
-          )}
+
 
           {activeSegment === 'TRIPS' && (
             <View style={{ marginTop: 6 }}>

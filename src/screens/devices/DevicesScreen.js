@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useContext } from 'react';
+import { AuthContext } from '../../context/AuthContext';
 import {
   View,
   StyleSheet,
@@ -16,6 +17,7 @@ import { fetchDeviceList } from '../../api/webApi';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const DevicesScreen = ({ navigation }) => {
+  const { userToken, isLoading } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
 
   const [allDevices, setAllDevices] = useState([]);
@@ -43,13 +45,15 @@ const DevicesScreen = ({ navigation }) => {
   }, []);
 
   useEffect(() => {
-    fetchDevices();
+    if (!isLoading && userToken) {
+      fetchDevices();
+    }
     // Auto refresh removed to reduce server load
     // const interval = setInterval(() => {
     //   fetchDevices(true);
     // }, 10000);
     // return () => clearInterval(interval);
-  }, [fetchDevices]);
+  }, [fetchDevices, isLoading, userToken]);
 
   // Counts
   const onlineCount = useMemo(() => allDevices.filter(d => d.status === 'online').length, [allDevices]);

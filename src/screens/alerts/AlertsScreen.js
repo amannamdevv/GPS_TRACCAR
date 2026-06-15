@@ -146,6 +146,27 @@ const AlertsScreen = ({ navigation }) => {
   const clearPending = () => { setPendingDeviceQ(''); setPendingTypes([]); setPendingAlarms([]); setPendingReadStatus('all'); };
   const clearApplied = () => { setAppliedDeviceQ(''); setAppliedTypes([]); setAppliedAlarms([]); setAppliedReadStatus('all'); };
 
+  const handleDeleteAll = () => {
+    if (filteredAlerts.length === 0) return;
+    Alert.alert(
+      'Delete All Alerts',
+      `Are you sure you want to delete all ${filteredAlerts.length} alerts?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete All',
+          style: 'destructive',
+          onPress: async () => {
+            setAlerts([]);
+            setSelectedKeys(new Set());
+            // Clear cached alerts data
+            await AsyncStorage.setItem('cached_alerts_data', JSON.stringify([]));
+          },
+        },
+      ],
+    );
+  };
+
   const handleBulkDelete = () => {
     if (selectedKeys.size === 0) return;
     Alert.alert(
@@ -515,10 +536,32 @@ const AlertsScreen = ({ navigation }) => {
       </View>
 
       <View style={styles.countRow}>
-        <Text style={styles.countText}>
-          {filteredAlerts.length} alert{filteredAlerts.length !== 1 ? 's' : ''}
-          {activeFilterCount > 0 ? ' (filtered)' : ' total'}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={styles.countText}>
+            {filteredAlerts.length} alert{filteredAlerts.length !== 1 ? 's' : ''}
+            {activeFilterCount > 0 ? ' (filtered)' : ' total'}
+          </Text>
+          {filteredAlerts.length > 0 && (
+            <TouchableOpacity 
+              style={{ marginLeft: 12, flexDirection: 'row', alignItems: 'center' }} 
+              onPress={() => {
+                if (selectedKeys.size === filteredAlerts.length && filteredAlerts.length > 0) {
+                  setSelectedKeys(new Set());
+                } else {
+                  setSelectedKeys(new Set(filteredAlerts.map(a => getStableKey(a))));
+                }
+              }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <Icon 
+                name={selectedKeys.size === filteredAlerts.length && filteredAlerts.length > 0 ? 'checkbox-marked' : 'checkbox-blank-outline'} 
+                size={16} 
+                color="#38bdf8" 
+              />
+              <Text style={{ marginLeft: 4, color: '#38bdf8', fontSize: 12, fontWeight: '600' }}>All</Text>
+            </TouchableOpacity>
+          )}
+        </View>
         {selectedKeys.size > 0 && (
           <TouchableOpacity style={styles.bulkDeleteBtn} onPress={handleBulkDelete}>
             <Icon name="trash-can-outline" size={16} color="#fff" />

@@ -78,7 +78,9 @@ const normalizeDeviceData = (rawData) => {
     const position_time = dev.position_time || dev.lastupdate || dev.devicetime || dev.fixtime || null;
 
     let status = 'offline';
-    if (dev.status === 'online' || dev.status === 1 || dev.status === '1' ||
+    if (String(dev.status).toLowerCase() === 'unknown' || String(dev.device_status).toLowerCase() === 'unknown') {
+      status = 'offline';
+    } else if (dev.status === 'online' || dev.status === 1 || dev.status === '1' ||
       dev.device_status === 'online' || dev.device_status === 1 || dev.device_status === '1') {
       status = 'online';
     } else if (position_time) {

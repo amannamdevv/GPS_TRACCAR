@@ -7,7 +7,6 @@ import notifee, {
 import Tts from 'react-native-tts';
 import moment from 'moment';
 import { AppState } from 'react-native';
-import BackgroundActions from 'react-native-background-actions';
 // ✅ FIX 1: fetchCustomEvents was never imported — added it here
 import { fetchAlarms, fetchDeviceList, fetchCustomEvents, reverseGeocode } from '../api/webApi';
 
@@ -472,7 +471,7 @@ class AlertNotificationService {
 
     // Check all possible alarm fields for vibration
     if (rawType.includes('vibration') || rawAttr.includes('vibration') || alarmTypes.includes('vibration'))
-      return make('vibration', '📳 Unusual vibration detected');
+      return null; // Explicitly ignored per user request
 
     // Fallback for any other alarm type
     if (alarm.type) {
@@ -567,18 +566,6 @@ class AlertNotificationService {
     await this._pollAlarms();           // Fires powerCut / lowBattery / vibration
   }
 
-  // ── Background loop ───────────────────────────────────────────────────────────
-
-  backgroundTask = async () => {
-    await new Promise(async () => {
-      while (BackgroundActions.isRunning()) {
-        await this._runOneCycle(); // ✅ FIX: use unified cycle method
-        const waitTime = this.appState === 'active' ? POLLING_INTERVAL_MS : BACKGROUND_POLLING_INTERVAL_MS;
-        await new Promise(r => setTimeout(r, waitTime));
-      }
-    });
-  };
-
   // Manually trigger a single poll cycle (useful for testing/debug)
   async refreshNow() {
     if (!this.isPolling) {
@@ -611,38 +598,20 @@ class AlertNotificationService {
         }
       } catch (e) { console.warn('[AlertService] Battery opt ignore request failed', e.message); }
 
-      const options = {
-        taskName: 'GPSAlerts',
-        taskTitle: 'GPS Tracking Active',
-        taskDesc: 'Monitoring real-time DG alerts',
-        taskIcon: { name: 'ic_launcher', type: 'mipmap' },
-        color: '#1565C0',
-        linkingURI: 'traccarmanager://',
-        parameters: {},
+      console.log('[AlertService] Starting foreground-only polling loop');
+
+      const runLoop = async () => {
+        if (!this.isPolling) return;
+
+        // Only run the alert cycle if the app is actively in the foreground
+        if (this.appState === 'active') {
+          await this._runOneCycle();
+        }
+
+        this._fallbackTimeout = setTimeout(runLoop, POLLING_INTERVAL_MS);
       };
 
-      const { Platform } = require('react-native');
-      if (Platform.OS === 'android' && Platform.Version >= 34) {
-        options.foregroundServiceTypes = ['dataSync', 'location'];
-      }
-
-      try {
-        // ✅ FIX: run first cycle before starting background task
-        await this._runOneCycle();
-        await BackgroundActions.start(this.backgroundTask, options);
-        console.log('[AlertService] Background task started ✅');
-      } catch (e) {
-        console.warn('[AlertService] Background task failed — using foreground fallback:', e.message);
-        await this._runOneCycle(); // first cycle
-
-        const runFallback = async () => {
-          if (!this.isPolling) return;
-          await this._runOneCycle(); // ✅ FIX: use unified cycle (was missing _pollCustomEvents before)
-          const waitTime = this.appState === 'active' ? POLLING_INTERVAL_MS : BACKGROUND_POLLING_INTERVAL_MS;
-          this._fallbackTimeout = setTimeout(runFallback, waitTime);
-        };
-        runFallback();
-      }
+      runLoop();
     } catch (e) {
       console.error('[AlertService] Critical error during start:', e);
       this.isPolling = false;
@@ -651,7 +620,6 @@ class AlertNotificationService {
 
   stop() {
     this.isPolling = false;
-    BackgroundActions.stop().catch(() => { });
     if (this._fallbackTimeout) {
       clearTimeout(this._fallbackTimeout);
       this._fallbackTimeout = null;
