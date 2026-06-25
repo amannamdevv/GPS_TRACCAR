@@ -10,13 +10,11 @@ import AlertService from '../../services/AlertNotificationService';
 const SettingsScreen = ({ navigation }) => {
   const { userInfo, logout } = useContext(AuthContext);
 
-  const [distanceUnit, setDistanceUnit] = useState(false);
-  const [speedUnit, setSpeedUnit] = useState(false);
-  const [timeFormat, setTimeFormat] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
+
+
   const [pushNotif, setPushNotif] = useState(true);
   const [geofenceNotif, setGeofenceNotif] = useState(true);
-  const [speedNotif, setSpeedNotif] = useState(true);
+
   const [bgAlerts, setBgAlerts] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -26,13 +24,10 @@ const SettingsScreen = ({ navigation }) => {
         const stored = await AsyncStorage.getItem('user_settings');
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (parsed.distanceUnit !== undefined) setDistanceUnit(parsed.distanceUnit);
-          if (parsed.speedUnit !== undefined) setSpeedUnit(parsed.speedUnit);
-          if (parsed.timeFormat !== undefined) setTimeFormat(parsed.timeFormat);
-          if (parsed.darkMode !== undefined) setDarkMode(parsed.darkMode);
+
           if (parsed.pushNotif !== undefined) setPushNotif(parsed.pushNotif);
           if (parsed.geofenceNotif !== undefined) setGeofenceNotif(parsed.geofenceNotif);
-          if (parsed.speedNotif !== undefined) setSpeedNotif(parsed.speedNotif);
+
           if (parsed.bgAlerts !== undefined) setBgAlerts(parsed.bgAlerts);
 
           // ✅ FIX: parsed value seedha use karo, state pe depend mat karo
@@ -166,35 +161,6 @@ const SettingsScreen = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        <SectionHeader title="PREFERENCES" />
-        <View style={styles.card}>
-          <SettingRow
-            icon="map-marker-distance"
-            title="Distance Unit"
-            subtitle={distanceUnit ? "Miles" : "Kilometers"}
-            rightElement={<Switch value={distanceUnit} onValueChange={(val) => handleToggle('distanceUnit', val, setDistanceUnit)} trackColor={{ true: '#10b981', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
-          />
-          <View style={styles.divider} />
-          <SettingRow
-            icon="speedometer"
-            title="Speed Unit"
-            subtitle={speedUnit ? "mph" : "km/h"}
-            rightElement={<Switch value={speedUnit} onValueChange={(val) => handleToggle('speedUnit', val, setSpeedUnit)} trackColor={{ true: '#10b981', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
-          />
-          <View style={styles.divider} />
-          <TouchableOpacity>
-            <SettingRow
-              icon="translate"
-              title="Language"
-              rightElement={
-                <View style={styles.selectorRow}>
-                  <Text style={styles.selectorText}>English</Text>
-                  <Icon name="chevron-right" size={20} color="#cbd5e1" />
-                </View>
-              }
-            />
-          </TouchableOpacity>
-        </View>
 
         <SectionHeader title="NOTIFICATIONS" />
         <View style={styles.card}>
@@ -203,19 +169,8 @@ const SettingsScreen = ({ navigation }) => {
             title="Push Notifications"
             rightElement={<Switch value={pushNotif} onValueChange={(val) => handleToggle('pushNotif', val, setPushNotif)} trackColor={{ true: '#1565C0', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
           />
-          <View style={styles.divider} />
-          <SettingRow
-            icon="bell-sleep-outline"
-            title="Background Alerts"
-            subtitle="Run alert service in background even when app closed"
-            rightElement={<Switch value={bgAlerts} onValueChange={(val) => handleToggle('bgAlerts', val, setBgAlerts)} trackColor={{ true: '#1565C0', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
-          />
-          <View style={styles.divider} />
-          <SettingRow
-            icon="speedometer"
-            title="Speed Alerts"
-            rightElement={<Switch value={speedNotif} onValueChange={(val) => handleToggle('speedNotif', val, setSpeedNotif)} trackColor={{ true: '#1565C0', false: '#e2e8f0' }} thumbColor="#FFFFFF" />}
-          />
+
+
         </View>
 
         <SectionHeader title="ABOUT" />
@@ -225,14 +180,6 @@ const SettingsScreen = ({ navigation }) => {
             title="App Version"
             rightElement={<Text style={styles.versionText}>1.0.0</Text>}
           />
-          <View style={styles.divider} />
-          <TouchableOpacity>
-            <SettingRow
-              icon="star-outline"
-              title="Rate App"
-              rightElement={<Icon name="chevron-right" size={20} color="#cbd5e1" />}
-            />
-          </TouchableOpacity>
         </View>
 
         <View style={{ height: 40 }} />

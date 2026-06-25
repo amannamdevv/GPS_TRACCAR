@@ -29,7 +29,6 @@ const MeScreen = ({ navigation }) => {
     {
       title: 'Activity & Reporting',
       items: [
-        { name: 'Dashboard', icon: 'view-dashboard', color: '#1565C0', route: 'Dashboard', desc: 'Real-time DG status & charts' },
         { name: 'DG Logs', icon: 'chart-bar', color: '#10b981', route: 'DgStatusLog', desc: 'Detailed DG status and logs' },
         // { name: 'DG Alarm Dashboard', icon: 'bell-alert-outline', color: '#ef4444', route: 'AlarmDashboard', desc: 'DG industrial alarm tracking' },
       ]

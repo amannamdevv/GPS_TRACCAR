@@ -70,6 +70,8 @@ const MapScreen = ({ navigation, route }) => {
   const [isOnline, setIsOnline] = useState(true);
   const [loading, setLoading] = useState(true);
   const [mapReady, setMapReady] = useState(false);
+  const mapReadyRef = useRef(false);
+  useEffect(() => { mapReadyRef.current = mapReady; }, [mapReady]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [mapLayer, setMapLayer] = useState('standard');
@@ -149,21 +151,49 @@ const MapScreen = ({ navigation, route }) => {
         var isFirstFit = true;
         var myLocMarker = null;
 
+        function updateMarkerScale() {
+          var z = map.getZoom();
+          // Scale from 0.5 (zoom 4) to 1.0 (zoom 15)
+          var scale = Math.max(0.4, Math.min(1.2, z / 14));
+          document.documentElement.style.setProperty('--marker-scale', scale);
+        }
+        map.on('zoom', updateMarkerScale);
+        updateMarkerScale();
+
         function getStatusColor(pos) {
           if (pos.status === 'online') return '#10b981'; // Green
           return '#ef4444'; // Red
         }
 
-        function createCustomIcon(pos) {
-          var color = getStatusColor(pos);
-          var rotation = pos.course || 0;
-          return L.divIcon({
-            className: 'custom-div-icon',
-            html: '<div style="transform: rotate(' + rotation + 'deg); width: 30px; height: 30px; background: ' + color + '; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center;"><div style="width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 8px solid white; margin-top: -4px;"></div></div>',
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
-          });
-        }
+       function createCustomIcon(pos) {
+  var isOnline = pos.status === 'online';
+  var color = isOnline ? '#10b981' : '#ef4444';
+  var pulse = isOnline
+    ? '<style>@keyframes ping{0%{transform:scale(1);opacity:0.6}100%{transform:scale(2);opacity:0}}</style>'
+    + '<div style="position:absolute;width:40px;height:40px;border-radius:50%;border:2px solid ' + color + ';animation:ping 1.6s ease-out infinite;top:0;left:0;"></div>'
+    : '';
+  var bob = isOnline ? 'animation:bob 1.6s ease-in-out infinite;' : '';
+
+  return L.divIcon({
+    className: '',
+    html: '<style>@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}</style>'
+        + '<div style="position:relative;display:flex;flex-direction:column;align-items:center; transform: scale(var(--marker-scale, 1)); transform-origin: bottom center; transition: transform 0.1s ease;">'
+        + pulse
+        + '<div style="' + bob + 'width:40px;height:40px;border-radius:50%;background:' + color + ';border:3px solid white;box-shadow:0 3px 10px ' + color + '88;display:flex;align-items:center;justify-content:center;position:relative;">'
+        + '<svg width="22" height="18" viewBox="0 0 22 18" fill="white">'
+        + '<rect x="0" y="3" width="10" height="10" rx="2"/>'
+        + '<rect x="10" y="0" width="11" height="13" rx="2"/>'
+        + '<rect x="1" y="4" width="6" height="5" rx="1" fill="' + color + '"/>'
+        + '<circle cx="4" cy="15" r="2.5" fill="white" stroke="' + color + '" stroke-width="1.2"/>'
+        + '<circle cx="16" cy="15" r="2.5" fill="white" stroke="' + color + '" stroke-width="1.2"/>'
+        + '</svg>'
+        + '</div>'
+        + '<div style="width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:8px solid ' + color + ';margin-top:-1px;"></div>'
+        + '</div>',
+    iconSize: [40, 52],
+    iconAnchor: [20, 52],
+  });
+}
 
         function buildPopup(pos) {
           var speedKmh = pos.speedKmh || 0;
@@ -189,8 +219,10 @@ const MapScreen = ({ navigation, route }) => {
             
             if (data.type === 'UPDATE_MARKERS') {
               var bounds = [];
+              var newIds = {};
               data.positions.forEach(function(pos) {
                 if (!pos.latitude || !pos.longitude) return;
+                newIds[pos.deviceId] = true;
                 var latlng = [pos.latitude, pos.longitude];
                 
                 if (markers[pos.deviceId]) {
@@ -203,6 +235,13 @@ const MapScreen = ({ navigation, route }) => {
                   });
                 }
                 bounds.push(latlng);
+              });
+
+              Object.keys(markers).forEach(function(id) {
+                if (!newIds[id]) {
+                  map.removeLayer(markers[id]);
+                  delete markers[id];
+                }
               });
 
               if (isFirstFit && bounds.length > 0) {
@@ -305,14 +344,14 @@ const MapScreen = ({ navigation, route }) => {
       setPositions(posMap);
 
       // If map is ready, send markers update
-      if (mapReady) {
+      if (mapReadyRef.current) {
         sendToMap('UPDATE_MARKERS', { positions: Object.values(posMap) });
-        // Only auto-focus and show location on first load — don't reset user's view on every refresh
+        // Only auto-show location blue dot on first load — don't reset user's view on every refresh
         if (!initialFocusDoneRef.current) {
           initialFocusDoneRef.current = true;
-          focusNearestDevice(Object.values(posMap));
-          // Auto-show user's current location blue dot
-          showMyLocation(true);
+          // showMyLocation(false) to NOT pan, just place the blue dot.
+          // isFirstFit in the WebView handles centering on all devices.
+          showMyLocation(false);
         } else if (followModeRef.current && selectedDeviceIdRef.current) {
           const selDev = posMap[selectedDeviceIdRef.current];
           if (selDev && selDev.latitude && selDev.longitude) {
@@ -331,7 +370,7 @@ const MapScreen = ({ navigation, route }) => {
       isFetchingRef.current = false;
       setLoading(false);
     }
-  }, [mapReady]);
+  }, []);
 
   // Helper to compute haversine distance
   const haversine = (lat1, lon1, lat2, lon2) => {
@@ -419,9 +458,20 @@ const MapScreen = ({ navigation, route }) => {
 
   useFocusEffect(
     useCallback(() => {
+      prevPositionsRef.current = {};
+      initialFocusDoneRef.current = false;
+      setDevices([]);
+      setPositions({});
+      setSelectedDeviceId(null);
+      if (webViewRef.current) {
+        webViewRef.current.injectJavaScript(`
+        Object.keys(markers).forEach(id => map.removeLayer(markers[id]));
+        markers = {};
+        isFirstFit = true;
+        true;
+      `);
+      }
       fetchData();
-      const interval = setInterval(fetchData, 10000); // Poll every 10s while focused
-      return () => clearInterval(interval);
     }, [fetchData])
   );
 
@@ -434,6 +484,13 @@ const MapScreen = ({ navigation, route }) => {
     }
   }, [route.params, mapReady]);
 
+  // Ensure data is fetched/displayed as soon as map is ready
+  useEffect(() => {
+    if (mapReady) {
+      fetchData();
+    }
+  }, [mapReady, fetchData]);
+
   const onMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
@@ -445,11 +502,10 @@ const MapScreen = ({ navigation, route }) => {
           sendToMap('UPDATE_MARKERS', { positions: Object.values(positions) });
           if (!initialFocusDoneRef.current) {
             initialFocusDoneRef.current = true;
-            focusNearestDevice(Object.values(positions));
           }
         }
-        // Show user's current location blue dot (initial fitAll)
-        showMyLocation(!initialFocusDoneRef.current);
+        // Show user's current location blue dot without panning
+        showMyLocation(false);
       } else if (data.type === 'MARKER_CLICK') {
         const dev = devices.find(d => d.id === data.id);
         if (dev) {
@@ -594,7 +650,7 @@ const MapScreen = ({ navigation, route }) => {
           <Icon name="magnify" size={22} color="#64748b" style={{ marginRight: 8 }} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Search vehicles..."
+            placeholder="Search DG Name..."
             value={searchQuery}
             onChangeText={(t) => {
               setSearchQuery(t);

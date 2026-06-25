@@ -27,6 +27,11 @@ const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
 // ─── STACK NAVIGATORS ────────────────────────────────────────────────────────
+const DashboardStack = () => (
+  <Stack.Navigator screenOptions={{ headerShown: false }}>
+    <Stack.Screen name="DashboardMain" component={DashboardScreen} />
+  </Stack.Navigator>
+);
 const MonitorStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="MonitorMain" component={MapScreen} />
@@ -58,7 +63,6 @@ const AlertsStack = () => (
 const MeStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="MeMain" component={MeScreen} />
-    <Stack.Screen name="Dashboard" component={DashboardScreen} />
     <Stack.Screen name="Reports" component={ReportsScreen} />
     <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
     <Stack.Screen name="Settings" component={SettingsScreen} />
@@ -82,11 +86,14 @@ const MainTabNavigator = () => {
 
   return (
     <Tab.Navigator
-      screenOptions={({ route }) => ({
+      screenOptions={({ route, navigation }) => ({
+        unmountOnBlur: true,
         headerShown: false,
         tabBarIcon: ({ color, size, focused }) => {
           let iconName;
-          if (route.name === 'MonitorTab') {
+          if (route.name === 'DashboardTab') {
+            iconName = focused ? 'view-dashboard' : 'view-dashboard-outline';
+          } else if (route.name === 'MonitorTab') {
             iconName = focused ? 'map-search' : 'map-search-outline';
           } else if (route.name === 'DeviceTab') {
             iconName = focused ? 'truck' : 'truck-outline';
@@ -113,26 +120,57 @@ const MainTabNavigator = () => {
           fontWeight: '600',
         },
       })}
+      initialRouteName="DashboardTab"
     >
+      <Tab.Screen
+        name="DashboardTab"
+        component={DashboardStack}
+        options={{ tabBarLabel: 'Dashboard' }}
+        listeners={({ navigation, route }) => ({
+          tabPress: e => {
+            navigation.navigate(route.name, { screen: 'DashboardMain' });
+          },
+        })}
+      />
       <Tab.Screen
         name="MonitorTab"
         component={MonitorStack}
-        options={{ tabBarLabel: 'Monitor' }}
+        options={{ tabBarLabel: 'Map' }}
+        listeners={({ navigation, route }) => ({
+          tabPress: e => {
+            navigation.navigate(route.name, { screen: 'MonitorMain' });
+          },
+        })}
       />
       <Tab.Screen
         name="DeviceTab"
         component={DevicesStack}
         options={{ tabBarLabel: 'Device' }}
+        listeners={({ navigation, route }) => ({
+          tabPress: e => {
+            navigation.navigate(route.name, { screen: 'DevicesList' });
+          },
+        })}
       />
       <Tab.Screen
         name="AlertTab"
         component={AlertsStack}
         options={{ tabBarLabel: 'Alert' }}
+        listeners={({ navigation, route }) => ({
+          tabPress: e => {
+            navigation.navigate(route.name, { screen: 'AlertsList' });
+          },
+        })}
       />
       <Tab.Screen
         name="MeTab"
         component={MeStack}
         options={{ tabBarLabel: 'Profile' }}
+        listeners={({ navigation, route }) => ({
+          tabPress: e => {
+            navigation.navigate(route.name, { screen: 'MeMain' });
+          },
+        })}
       />
     </Tab.Navigator>
   );

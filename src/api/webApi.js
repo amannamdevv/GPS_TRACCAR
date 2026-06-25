@@ -123,11 +123,43 @@ const normalizeDeviceData = (rawData) => {
 };
 
 // ─── fetchDeviceList ──────────────────────────────────────────────────────────
-export const fetchDeviceList = async () => {
+export const fetchDeviceList = (filters = {}) => _fetchDeviceList(filters);
+
+const _fetchDeviceList = async (filters = {}) => {
   try {
+    let userDeviceIds = new Set();
+    let restrictDevices = false;
+    let deviceIdsParam = '';
+    try {
+      const userInfoStr = await AsyncStorage.getItem('userInfo');
+      if (userInfoStr) {
+        const userInfo = JSON.parse(userInfoStr);
+        if (userInfo.device_ids) {
+          if (Array.isArray(userInfo.device_ids)) {
+            userInfo.device_ids.forEach(id => {
+              if (id != null) userDeviceIds.add(String(id));
+            });
+          } else if (typeof userInfo.device_ids === 'string') {
+            userInfo.device_ids.split(',').forEach(id => {
+              if (id.trim()) userDeviceIds.add(String(id.trim()));
+            });
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
+
+    if (userDeviceIds.size > 0) {
+      deviceIdsParam = Array.from(userDeviceIds).join(',');
+      restrictDevices = true;
+    }
+
+    const params = deviceIdsParam ? { device_ids: deviceIdsParam, deviceid: deviceIdsParam } : {};
+    // Pass filter params alongside device_ids — do NOT set aid/userid/user_id to null (breaks auth)
+    const latestParams = { ...params, ...filters };
+
     const [latestResp, allResp] = await Promise.allSettled([
-      getWithRetry('/dg_device_latest_json/'),
-      getWithRetry('/devices')
+      getWithRetry('/dg_device_latest_json/', { params: latestParams }),
+      getWithRetry('/devices', { params })
     ]);
 
     let latestData = [];
@@ -138,7 +170,7 @@ export const fetchDeviceList = async () => {
       else if (Array.isArray(raw.devices)) latestData = raw.devices;
       else if (typeof raw === 'object') latestData = Object.values(raw);
     } else if (latestResp.status === 'rejected') {
-      throw latestResp.reason;
+      console.warn('[webApi] dg_device_latest_json failed', latestResp.reason);
     }
 
     let allDevices = [];
@@ -151,8 +183,6 @@ export const fetchDeviceList = async () => {
     }
 
     const map = new Map();
-
-    // Build a map of ICCID from latestData (dg_device_latest_json)
     const iccidMap = new Map();
     latestData.forEach(d => {
       const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
@@ -161,11 +191,30 @@ export const fetchDeviceList = async () => {
       }
     });
 
-    // 1. Add only devices that belong to the logged‑in user (present in latestData).
-    const allowedIds = new Set(latestData.map(d => {
+    const allAvailableIds = new Set();
+    const hasFilters = Object.keys(filters).length > 0;
+
+    latestData.forEach(d => {
       const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
-      return id != null ? String(id) : null;
-    }).filter(Boolean));
+      if (id != null) allAvailableIds.add(String(id));
+    });
+
+    // Only include allDevices IDs as a fallback if NO filters are applied.
+    // Otherwise, applying a filter that returns 0 devices would incorrectly show all devices.
+    if (!hasFilters) {
+      allDevices.forEach(d => {
+        const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
+        if (id != null) allAvailableIds.add(String(id));
+      });
+    }
+
+    const allowedIds = new Set();
+    allAvailableIds.forEach(id => {
+      if (userDeviceIds.size === 0 || userDeviceIds.has(id)) {
+        allowedIds.add(id);
+      }
+    });
+
     allDevices.forEach(d => {
       const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
       if (id != null && allowedIds.has(String(id))) {
@@ -174,7 +223,6 @@ export const fetchDeviceList = async () => {
       }
     });
 
-    // 2. Override with the custom latest position data ONLY for our scoped devices
     latestData.forEach(d => {
       const id = d.deviceid != null ? d.deviceid : (d.id != null ? d.id : null);
       if (id != null && allowedIds.has(String(id))) {
@@ -184,15 +232,18 @@ export const fetchDeviceList = async () => {
     });
 
     const mergedArray = Array.from(map.values());
-    const result = normalizeDeviceData(mergedArray);
-    // Re‑calculate counts based on final device list
-    result.total_devices = result.devices.length;
-    result.active_devices = result.devices.filter(d => d.status === 'online').length;
-    result.non_active_devices = result.devices.filter(d => d.status !== 'online').length;
-    return result;
+    const normalized = normalizeDeviceData(mergedArray);
+    const devicesList = normalized.devices || [];
+    return {
+      success: true,
+      devices: devicesList,
+      total_devices: devicesList.length,
+      active_devices: devicesList.filter(d => d.status === 'online').length,
+      non_active_devices: devicesList.filter(d => d.status !== 'online').length,
+    };
   } catch (error) {
     console.error('[webApi] Error fetching device list:', error);
-    throw new Error(error.response?.data?.message || 'Failed to fetch live devices from server.');
+    throw new Error(error?.response?.data?.message || 'Failed to fetch live devices from server.');
   }
 };
 
@@ -469,6 +520,38 @@ export const getTripsReport = async (deviceId, from, to) => {
   } catch (e) {
     console.warn('[getTripsReport]', e.message);
     return [];
+  }
+};
+
+// ─── fetchFilterDropdowns ─────────────────────────────────────────────────────
+export const fetchFilterDropdowns = async (clientId = null, stateId = null, distId = null) => {
+  try {
+    const params = {};
+    if (clientId) params.client_id = clientId;
+    if (stateId) params.state_id = stateId;
+    if (distId) params.dist_id = distId;
+    const resp = await webApi.get('/filter-dropdowns/', { params });
+    const raw = resp.data;
+    return {
+      clients: Array.isArray(raw.clients) ? raw.clients : [],
+      states: Array.isArray(raw.states) ? raw.states : [],
+      districts: Array.isArray(raw.districts) ? raw.districts : [],
+      clusters: Array.isArray(raw.clusters) ? raw.clusters : [],
+    };
+  } catch (e) {
+    console.warn('[fetchFilterDropdowns]', e.message);
+    return { clients: [], states: [], districts: [], clusters: [] };
+  }
+};
+
+// ─── fetchDgDashboard ────────────────────────────────────────────────────────
+export const fetchDgDashboard = async () => {
+  try {
+    const resp = await webApi.get('/dg_dashboard/', { timeout: 15000 });
+    return resp.data || { top_moving: [], top_idle: [] };
+  } catch (e) {
+    console.warn('[fetchDgDashboard]', e.message);
+    return { top_moving: [], top_idle: [] };
   }
 };
 

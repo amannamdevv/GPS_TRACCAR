@@ -9,7 +9,6 @@ import {
   Alert,
   FlatList,
   StatusBar,
-  Modal,
 } from 'react-native';
 import DatePicker from 'react-native-date-picker';
 import { WebView } from 'react-native-webview';
@@ -31,26 +30,22 @@ const DeviceDetailScreen = ({ route, navigation }) => {
 
   const [trips, setTrips] = useState([]);
   const [tripsLoading, setTripsLoading] = useState(false);
-  const [activeSegment, setActiveSegment] = useState('LOCATION'); // 'LOCATION', 'SENSORS', 'TRIPS', 'DG_REPORT'
+  const [activeSegment, setActiveSegment] = useState('LOCATION');
   const [currentAddress, setCurrentAddress] = useState(initialDevice.address || null);
   const [addressLoading, setAddressLoading] = useState(!initialDevice.address);
-  const addressCacheRef = useRef({});
 
-  // DG Logs state
   const [dgLogs, setDgLogs] = useState([]);
   const [dgLoading, setDgLoading] = useState(false);
   const [dgTotalCount, setDgTotalCount] = useState(0);
 
-  // ── DG Report Filters ──
-  const [dgStatusFilter, setDgStatusFilter] = useState('ALL'); // ALL, OFF, ON, MOVE, STOPPED
+  const [dgStatusFilter, setDgStatusFilter] = useState('ALL');
   const [dgDateFrom, setDgDateFrom] = useState(() => {
     const d = new Date(); d.setHours(0, 0, 0, 0); return d;
   });
-  const [dgDateTo, setDgDateTo] = useState(new Date());
+  const [dgDateTo, setDgDateTo] = useState(() => { const d = new Date(); d.setHours(23, 59, 59, 999); return d; });
   const [showDgFromPicker, setShowDgFromPicker] = useState(false);
   const [showDgToPicker, setShowDgToPicker] = useState(false);
 
-  // ── Trip Filters ──
   const [tripDateFrom, setTripDateFrom] = useState(() => {
     const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(0, 0, 0, 0); return d;
   });
@@ -58,19 +53,48 @@ const DeviceDetailScreen = ({ route, navigation }) => {
   const [showTripFromPicker, setShowTripFromPicker] = useState(false);
   const [showTripToPicker, setShowTripToPicker] = useState(false);
 
+  const [dgPage, setDgPage] = useState(1);
+  const DG_PAGE_SIZE = 10;
+
   const [expandedCardIds, setExpandedCardIds] = useState({});
-  const toggleExpand = (id) => {
-    setExpandedCardIds((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
+  const toggleExpand = (id) => setExpandedCardIds(prev => ({ ...prev, [id]: !prev[id] }));
+
+  const finalFilteredDgLogs = React.useMemo(() => {
+    if (dgStatusFilter === 'ALL') return dgLogs;
+    return dgLogs.filter(item => {
+      const raw = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
+      if (dgStatusFilter === 'OFF') return raw.includes('OFF') || raw === '0';
+      if (dgStatusFilter === 'ON') return (raw.includes('ON') && !raw.includes('MOTION')) || raw === '1';
+      if (dgStatusFilter === 'MOVE') return raw.includes('MOVE') || raw.includes('MOVING') || raw.includes('MOTION') || raw.includes('TRANSIT');
+      if (dgStatusFilter === 'STOPPED') return raw.includes('STOP') || raw.includes('IDLE') || raw.includes('PARK');
+      return true;
+    });
+  }, [dgLogs, dgStatusFilter]);
+
+  const dgLogsToRender = React.useMemo(() => {
+    const start = (dgPage - 1) * DG_PAGE_SIZE;
+    return finalFilteredDgLogs.slice(start, start + DG_PAGE_SIZE);
+  }, [finalFilteredDgLogs, dgPage]);
+
+  const totalPages = Math.ceil(finalFilteredDgLogs.length / DG_PAGE_SIZE);
+  const hasMoreDgLogs = finalFilteredDgLogs.length > dgPage * DG_PAGE_SIZE;
+
+  useEffect(() => { setDgPage(1); }, [dgStatusFilter, dgDateFrom, dgDateTo]);
 
   const formatTime = (raw) => {
     if (!raw || raw === 'N/A') return 'N/A';
     const m = moment(raw);
     if (!m.isValid()) return raw;
-    return m.format('DD MMM YYYY, h:mm A');
+    return m.format('DD/MM/YYYY, h:mm A');
   };
 
-  // ─── UPDATE ON ROUTE PARAMS CHANGE ─────────────────────────────────────────
+  const formatDuration = (totalMinutes) => {
+    const mins = parseInt(totalMinutes, 10) || 0;
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+  };
+
   useEffect(() => {
     if (route.params?.device && route.params.device.id !== device.id) {
       const newDev = route.params.device;
@@ -87,15 +111,11 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     }
   }, [route.params?.device]);
 
-  // Geocoding removed to use single API address
-
-  // ─── REFRESH POSITION ───────────────────────────────────────────────────────
   const refreshPosition = useCallback(async () => {
     try {
       const data = await fetchDeviceList();
       const devicesData = data.devices || [];
       const updatedDev = devicesData.find(d => d.id === device.id);
-
       if (updatedDev) {
         const isMoving = ['moving', 'true', '1', true, 1].includes(
           typeof updatedDev.motion_status === 'string'
@@ -107,7 +127,6 @@ const DeviceDetailScreen = ({ route, navigation }) => {
             ? updatedDev.battery_status.toLowerCase()
             : updatedDev.battery_status
         );
-
         setDevice(prev => ({
           ...prev,
           iccid: updatedDev.iccid,
@@ -131,21 +150,15 @@ const DeviceDetailScreen = ({ route, navigation }) => {
             blocked: false,
           },
         }));
-
-        if (updatedDev.address) {
-          setCurrentAddress(updatedDev.address);
-        }
+        if (updatedDev.address) setCurrentAddress(updatedDev.address);
       }
     } catch (err) {
       console.warn('Position refresh error:', err.message);
     }
   }, [device.id]);
 
-  useEffect(() => {
-    refreshPosition();
-  }, [refreshPosition]);
+  useEffect(() => { refreshPosition(); }, [refreshPosition]);
 
-  // ─── LOAD TRIPS ─────────────────────────────────────────────────────────────
   const loadTrips = useCallback(async () => {
     if (tripsLoading) return;
     setTripsLoading(true);
@@ -153,22 +166,17 @@ const DeviceDetailScreen = ({ route, navigation }) => {
       const start = moment(tripDateFrom).format('YYYY-MM-DD HH:mm:ss');
       const end = moment(tripDateTo).format('YYYY-MM-DD HH:mm:ss');
       const data = await getTripsReport(device.id, start, end);
-
-      // Client-side date filter
       const fromMs = moment(tripDateFrom).valueOf();
       const toMs = moment(tripDateTo).valueOf();
       const timeFiltered = (data || []).filter(trip => {
         const t = moment(trip.startTime).valueOf();
         return t >= fromMs && t <= toMs;
       });
-
       const enriched = await Promise.all(timeFiltered.map(async trip => {
-        if (!trip.startAddress && trip.startLat) {
+        if (!trip.startAddress && trip.startLat)
           trip.startAddress = await reverseGeocode(trip.startLat, trip.startLon);
-        }
-        if (!trip.endAddress && trip.endLat) {
+        if (!trip.endAddress && trip.endLat)
           trip.endAddress = await reverseGeocode(trip.endLat, trip.endLon);
-        }
         return trip;
       }));
       setTrips(enriched);
@@ -179,40 +187,28 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     }
   }, [device.id, tripsLoading, tripDateFrom, tripDateTo]);
 
-  // ─── LOAD DG LOGS ───────────────────────────────────────────────────────────
   const loadDgLogs = useCallback(async () => {
     if (dgLoading) return;
     setDgLoading(true);
     try {
-      const from = moment(dgDateFrom).format('YYYY-MM-DD HH:mm:ss');
-      const to = moment(dgDateTo).format('YYYY-MM-DD HH:mm:ss');
       const rows = await fetchDgStatusLogs({
-        device_id: device.id,
+        deviceid: String(device.id),
         dg_name: device.name,
-        from,
-        to,
-        page: 1,
+        start_date: moment(dgDateFrom).format('YYYY-MM-DD'),
+        end_date: moment(dgDateTo).format('YYYY-MM-DD'),
         limit: 99999,
+        offset: 0,
       });
 
       const targetId = String(device.id);
-      const targetName = String(device.name || '').trim().toLowerCase();
-
-      // Client-side date filter
-      const fromMs = moment(dgDateFrom).valueOf();
-      const toMs = moment(dgDateTo).valueOf();
-
+      // Use the user-selected date range, not today's date
+      const fromMs = moment(dgDateFrom).startOf('day').valueOf();
+      const toMs = moment(dgDateTo).endOf('day').valueOf();
       const filtered = (rows || []).filter(item => {
         const itemId = String(item.deviceid || item.device_id || '');
         if (itemId && itemId !== targetId) return false;
-
-        const itemName = String(item.dg_name || item.device_name || '').trim().toLowerCase();
-        if (itemName && targetName && itemName !== targetName && !itemId) return false;
-
-        // Time filter
         const t = moment(item.start_time || item.position_time).valueOf();
         if (t < fromMs || t > toMs) return false;
-
         return true;
       });
 
@@ -225,34 +221,26 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     }
   }, [device.id, dgLoading, dgDateFrom, dgDateTo]);
 
-  // Trigger data load based on segment selection
   useEffect(() => {
     if (activeSegment === 'TRIPS') loadTrips();
     if (activeSegment === 'DG_REPORT') loadDgLogs();
   }, [activeSegment]);
 
-  const viewTripHistory = async (trip) => {
-    try {
-      setTripsLoading(true);
-      const positions = await getPositions(device.id, trip.startTime, trip.endTime);
-      const coords = positions.map(p => [p.latitude, p.longitude]);
-      if (coords.length > 0) {
-        navigation.navigate('Playback', { device, historyData: { coords, startTime: new Date(trip.startTime).toLocaleString(), endTime: new Date(trip.endTime).toLocaleString() } });
-      } else {
-        Alert.alert('No Data', 'No GPS positions found for this trip.');
-      }
-    } catch (err) {
-      Alert.alert('History Error', err.message);
-    } finally {
-      setTripsLoading(false);
-    }
-  };
+  const dgStats = React.useMemo(() => {
+    let totalDist = 0, totalTime = 0, onDuration = 0, offDuration = 0, moveDuration = 0, stopDuration = 0;
+    dgLogs.forEach(item => {
+      const raw = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
+      const duration = Number(item.total_duration_minutes) || 0;
+      if (raw.includes('OFF') || raw === '0') offDuration += duration;
+      else if (raw.includes('ON') && !raw.includes('MOVE') && !raw.includes('MOTION')) onDuration += duration;
+      else if (raw.includes('MOVE') || raw.includes('MOVING') || raw.includes('MOTION') || raw.includes('TRANSIT')) moveDuration += duration;
+      else if (raw.includes('STOP') || raw.includes('IDLE') || raw.includes('PARK')) stopDuration += duration;
+      if (item.covered_distance_km) totalDist += Number(item.covered_distance_km);
+      if (item.total_duration_minutes) totalTime += Number(item.total_duration_minutes);
+    });
+    return { totalDist, totalTime, onDuration, offDuration, moveDuration, stopDuration };
+  }, [dgLogs]);
 
-  const handleSendCommand = () => {
-    Alert.alert('Send Command', 'Command system is under development.');
-  };
-
-  // ─── SENSOR ATTRIBUTES ──────────────────────────────────────────────────────
   const attr = device.attributes || {};
   const ignition = device.ignition ?? attr.ignition ?? null;
   const charge = device.charge ?? attr.charge ?? null;
@@ -261,16 +249,6 @@ const DeviceDetailScreen = ({ route, navigation }) => {
   const motion = device.motion ?? attr.motion ?? null;
   const powerAttr = attr.power ?? attr.battery ?? attr.io1 ?? attr.adc1;
   const power = powerAttr != null ? parseFloat(powerAttr).toFixed(1) : null;
-  const fuel = attr.fuel != null ? Math.round(attr.fuel) : null;
-  const temp = attr.temp != null ? attr.temp.toFixed(1) : null;
-  const blocked = attr.blocked ?? null;
-  const totalDistKm = attr.totalDistance != null
-    ? (attr.totalDistance / 1000).toFixed(2) + ' km'
-    : device.totalDist ? `${device.totalDist} km` : '0 km';
-  const hoursMs = attr.hours ?? null;
-  const hoursStr = hoursMs != null
-    ? `${Math.floor(hoursMs / 3600000)}h ${Math.floor((hoursMs % 3600000) / 60000)}m`
-    : '0h 0m';
 
   const isOnline = device.status === 'online';
   const isMoving = device.motion_status === 'moving' || device.motion_status === true || (device.speedKmh || 0) > 2;
@@ -278,39 +256,24 @@ const DeviceDetailScreen = ({ route, navigation }) => {
   let statusColor = '#ef4444';
   let statusLabel = 'Offline';
   if (isOnline) {
-    if (isMoving) {
-      statusColor = '#10b981';
-      statusLabel = 'Moving';
-    } else {
-      statusColor = '#0284c7';
-      statusLabel = 'Online';
-    }
+    if (isMoving) { statusColor = '#10b981'; statusLabel = 'Moving'; }
+    else { statusColor = '#0284c7'; statusLabel = 'Online'; }
   }
 
-  // ─── DG LOG CARD ────────────────────────────────────────────────────────────
+  // ─── DG Log Card ──────────────────────────────────────────────────────────
   const renderDgLogCard = ({ item }) => {
     const isExpanded = !!expandedCardIds[item.id];
     const rawStatus = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
-    let statusLabel = 'DG OFF';
+    let cardStatusLabel = 'DG OFF';
     let pillStyle = styles.statusPillOff;
     let iconName = 'power-plug-off';
 
     if (rawStatus.includes('MOVING') || rawStatus.includes('MOVE') || rawStatus.includes('MOTION') || rawStatus.includes('TRANSIT')) {
-      statusLabel = 'MOVING';
-      pillStyle = styles.statusPillMoving;
-      iconName = 'truck-delivery-outline';
+      cardStatusLabel = 'MOVING'; pillStyle = styles.statusPillMoving; iconName = 'truck-delivery-outline';
     } else if (rawStatus.includes('STOP') || rawStatus.includes('IDLE') || rawStatus.includes('PARK')) {
-      statusLabel = 'STOPPED';
-      pillStyle = styles.statusPillStop;
-      iconName = 'octagon-outline';
+      cardStatusLabel = 'STOPPED'; pillStyle = styles.statusPillStop; iconName = 'octagon-outline';
     } else if (rawStatus.includes('ON') || rawStatus === '1') {
-      statusLabel = 'DG ON';
-      pillStyle = styles.statusPillOn;
-      iconName = 'lightning-bolt';
-    } else if (rawStatus.includes('OFF') || rawStatus === '0') {
-      statusLabel = 'DG OFF';
-      pillStyle = styles.statusPillOff;
-      iconName = 'power-plug-off';
+      cardStatusLabel = 'DG ON'; pillStyle = styles.statusPillOn; iconName = 'lightning-bolt';
     }
 
     return (
@@ -318,7 +281,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
         <View style={styles.cardHeader2}>
           <View style={[styles.statusPill, pillStyle]}>
             <Icon name={iconName} size={13} color="#FFF" />
-            <Text style={styles.statusPillText}>{statusLabel}</Text>
+            <Text style={styles.statusPillText}>{cardStatusLabel}</Text>
           </View>
           <Text style={styles.logDeviceName} numberOfLines={1}>
             {item.dg_name || item.device_name || `ID: ${item.deviceid}`}
@@ -328,15 +291,17 @@ const DeviceDetailScreen = ({ route, navigation }) => {
         <View style={styles.quickTelemetryRow}>
           <View style={styles.telemetryItem}>
             <Icon name="clock-outline" size={15} color="#64748b" />
-            <Text style={styles.telemetryText}>{item.duration_minutes ?? 0} Mins</Text>
+            <Text style={styles.telemetryText}>{formatDuration(item.total_duration_minutes)}</Text>
           </View>
           <View style={styles.telemetryItem}>
             <Icon name="road-variant" size={15} color="#64748b" />
             <Text style={styles.telemetryText}>{item.covered_distance_km ?? 0} KM</Text>
           </View>
-          <View style={styles.telemetryItem}>
+          <View style={[styles.telemetryItem, { flex: 1.5 }]}>
             <Icon name="transmission-tower" size={15} color="#64748b" />
-            <Text style={styles.telemetryText} numberOfLines={1}>{item.nearest_indus_id || 'Tower N/A'}</Text>
+            <Text style={styles.telemetryText} numberOfLines={2}>
+              {item.nearest_indus_id ? `${item.nearest_indus_id} (${item.nearest_distance_m != null ? item.nearest_distance_m + 'm' : 'N/A'})` : 'Tower N/A'}
+            </Text>
           </View>
         </View>
 
@@ -348,7 +313,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
               <Text style={styles.addressText} numberOfLines={2}>{item.start_address || 'Address Not Available'}</Text>
               {item.start_latitude ? (
                 <Text style={styles.coordsText}>
-                  Coord: {parseFloat(item.start_latitude).toFixed(5)}, {parseFloat(item.start_longitude).toFixed(5)}
+                  {parseFloat(item.start_latitude).toFixed(5)}, {parseFloat(item.start_longitude).toFixed(5)}
                 </Text>
               ) : null}
             </View>
@@ -361,7 +326,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
               <Text style={styles.addressText} numberOfLines={2}>{item.end_address || 'Address Not Available'}</Text>
               {item.end_latitude ? (
                 <Text style={styles.coordsText}>
-                  Coord: {parseFloat(item.end_latitude).toFixed(5)}, {parseFloat(item.end_longitude).toFixed(5)}
+                  {parseFloat(item.end_latitude).toFixed(5)}, {parseFloat(item.end_longitude).toFixed(5)}
                 </Text>
               ) : null}
             </View>
@@ -375,43 +340,41 @@ const DeviceDetailScreen = ({ route, navigation }) => {
 
         {isExpanded && (
           <View style={styles.expandedDrawer}>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>📍 District / Area:</Text>
-              <Text style={styles.detailValue}>{item.district || 'N/A'} / {item.area || 'N/A'}</Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>🏫 Site Name / Type:</Text>
-              <Text style={styles.detailValue}>{item.site_name || 'N/A'} ({item.site_type || 'N/A'})</Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>📞 OME ERP O&M:</Text>
-              <Text style={styles.detailValue}>{item.ome_name_as_erp || 'N/A'}</Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>👤 AOM Manager:</Text>
-              <Text style={styles.detailValue}>{item.aom_name || 'N/A'} {item.aom_number ? `(${item.aom_number})` : ''}</Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>🗼 Indus Towers (100m):</Text>
-              <Text style={styles.detailValue} numberOfLines={1}>{item.indus_id_within_100m || 'None'}</Text>
-            </View>
-            <View style={styles.detailRow}>
-              <Text style={styles.detailLabel}>📏 Nearest Indus Dist:</Text>
-              <Text style={styles.detailValue}>{item.nearest_distance_m !== null ? `${item.nearest_distance_m} meters` : 'N/A'}</Text>
-            </View>
+            {[
+              { label: '🌐 Circle', value: item.circle || 'N/A' },
+              { label: '📍 Area / District', value: `${item.area || 'N/A'} / ${item.district || 'N/A'}` },
+              { label: '🏫 Site Name / Type', value: `${item.site_name || 'N/A'} (${item.site_type || 'N/A'})` },
+              // { label: '🔵 Current Indus ID', value: item.current_indus_id || 'N/A' },
+              // { label: '📏 Nearest Distance', value: item.nearest_distance_m != null ? `${item.nearest_distance_m} m` : 'N/A' },
+              { label: '🗼 Indus ID (100m)', value: item.indus_id_within_100m || 'None' },
+              { label: '📞 IME', value: item.ome_name_as_erp || 'N/A' },
+              { label: '👤 AOM', value: `${item.aom_name || 'N/A'}${item.aom_number ? ` (${item.aom_number})` : ''}` },
+              { label: '🏢 Client Name', value: item.client_name || 'N/A' },
+
+              // { label: '⏱ Total Duration', value: item.total_duration_minutes != null ? `${item.total_duration_minutes} mins` : 'N/A' },
+              // { label: '🔗 Merged Rows', value: item.merged_rows != null ? String(item.merged_rows) : 'N/A' },
+              { label: '📡 GPS Install Date', value: item.gps_install_date ? moment(item.gps_install_date).format('DD/MM/YYYY') : 'N/A' },
+            ].map((row, idx) => (
+              <View key={idx} style={styles.detailRow}>
+                <Text style={styles.detailLabel}>{row.label}</Text>
+                <Text style={styles.detailValue} numberOfLines={2}>{row.value}</Text>
+              </View>
+            ))}
           </View>
         )}
       </View>
     );
   };
 
+  // ─── RENDER ───────────────────────────────────────────────────────────────
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <Header title="DG Console" navigation={navigation} showBack />
 
       <ScrollView contentContainerStyle={styles.scroll}>
-        {/* Profile Card Header */}
+
+        {/* ── Profile Card ── */}
         <View style={styles.profileHeaderCard}>
           <View style={[styles.largeAvatar, { backgroundColor: `${statusColor}15` }]}>
             <Icon name="car" size={38} color={statusColor} />
@@ -426,7 +389,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           </View>
         </View>
 
-        {/* 4 Action Grid */}
+        {/* ── Quick Action Grid ── */}
         <View style={styles.quickGrid}>
           {[
             { label: 'Tracking', icon: 'crosshairs-gps', color: '#1565C0', route: 'Tracking' },
@@ -437,7 +400,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
               key={idx}
               style={styles.gridItem}
               activeOpacity={0.8}
-              onPress={btn.action || (() => navigation.navigate(btn.route, { device }))}
+              onPress={() => navigation.navigate(btn.route, { device })}
             >
               <View style={[styles.gridIconBg, { backgroundColor: `${btn.color}10` }]}>
                 <Icon name={btn.icon} size={24} color={btn.color} />
@@ -447,7 +410,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           ))}
         </View>
 
-        {/* Segmented Controller (Tab Bar) */}
+        {/* ── Segment Tab Bar ── */}
         <View style={styles.segmentTabBar}>
           {[
             { key: 'LOCATION', label: 'Map' },
@@ -466,8 +429,10 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           ))}
         </View>
 
-        {/* Segment Contents */}
+        {/* ── Segment Content ── */}
         <View style={styles.segmentContent}>
+
+          {/* ════ LOCATION ════ */}
           {activeSegment === 'LOCATION' && (
             <View style={styles.card}>
               {device.lat && device.lng && device.lat !== 0 ? (
@@ -475,8 +440,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                   <WebView
                     originWhitelist={['*']}
                     source={{
-                      html: `
-                      <!DOCTYPE html><html>
+                      html: `<!DOCTYPE html><html>
                       <head>
                         <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
                         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
@@ -488,8 +452,8 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                         var map=L.map('map',{zoomControl:false,attributionControl:false}).setView([${device.lat},${device.lng}],15);
                         L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}').addTo(map);
                         L.circleMarker([${device.lat},${device.lng}],{radius:8,fillColor:'#2196F3',color:'#fff',weight:2,opacity:1,fillOpacity:0.9}).addTo(map);
-                      </script></body></html>
-                    ` }}
+                      </script></body></html>`,
+                    }}
                     style={{ flex: 1 }}
                     scrollEnabled={false}
                   />
@@ -508,11 +472,9 @@ const DeviceDetailScreen = ({ route, navigation }) => {
             </View>
           )}
 
-
-
+          {/* ════ TRIPS ════ */}
           {activeSegment === 'TRIPS' && (
             <View style={{ marginTop: 6 }}>
-              {/* ── Trip Date Range Filter ── */}
               <View style={styles.filterBar}>
                 <TouchableOpacity style={styles.dateChip} onPress={() => setShowTripFromPicker(true)}>
                   <Icon name="calendar-start" size={14} color="#f97316" />
@@ -546,12 +508,23 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                 trips.map((trip, idx) => (
                   <View key={idx} style={[styles.card, { padding: 14, marginBottom: 12 }]}>
                     <View style={styles.tripHeader}>
-                      <Text style={[styles.tripTime, { fontWeight: 'bold', color: trip.status === 'OFF' ? '#ef4444' : trip.status === 'MOVE' || trip.status === 'MOVING' ? '#10b981' : '#facc15' }]}>{trip.status}</Text>
+                      <Text style={[styles.tripTime, {
+                        fontWeight: 'bold',
+                        color: trip.status === 'OFF' ? '#ef4444'
+                          : (trip.status === 'MOVE' || trip.status === 'MOVING') ? '#10b981'
+                            : '#facc15',
+                      }]}>{trip.status}</Text>
                       <Text style={styles.tripTime}>{formatTime(trip.startTime)} – {formatTime(trip.endTime)}</Text>
                       <Text style={styles.tripDur}>{Math.round(trip.duration / 60)}m</Text>
                     </View>
-                    <View style={styles.tripRouteRow}><Icon name="play-circle" size={14} color="#10b981" /><Text style={styles.tripLocText} numberOfLines={1}>{trip.startAddress || 'Loading...'}</Text></View>
-                    <View style={styles.tripRouteRow}><Icon name="stop-circle" size={14} color="#ef4444" /><Text style={styles.tripLocText} numberOfLines={1}>{trip.endAddress || 'Loading...'}</Text></View>
+                    <View style={styles.tripRouteRow}>
+                      <Icon name="play-circle" size={14} color="#10b981" />
+                      <Text style={styles.tripLocText} numberOfLines={1}>{trip.startAddress || 'Loading...'}</Text>
+                    </View>
+                    <View style={styles.tripRouteRow}>
+                      <Icon name="stop-circle" size={14} color="#ef4444" />
+                      <Text style={styles.tripLocText} numberOfLines={1}>{trip.endAddress || 'Loading...'}</Text>
+                    </View>
                     <View style={styles.tripFooter}>
                       <Text style={styles.tripDist}>{(trip.distance / 1000).toFixed(2)} km</Text>
                     </View>
@@ -561,56 +534,68 @@ const DeviceDetailScreen = ({ route, navigation }) => {
             </View>
           )}
 
+          {/* ════ DG REPORT ════ */}
           {activeSegment === 'DG_REPORT' && (
             <View style={{ marginTop: 6 }}>
-              <View style={styles.dgSummaryBox}>
-                <Text style={styles.dgSummaryTitle}>DG Merged Reports</Text>
-                <TouchableOpacity onPress={loadDgLogs} disabled={dgLoading}>
-                  <Icon name="refresh" size={18} color="#1565C0" />
-                </TouchableOpacity>
-              </View>
 
-              {/* ── DG Status Filter Chips ── */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
-                {['ALL', 'OFF', 'ON', 'MOVE', 'STOPPED'].map(st => (
-                  <TouchableOpacity
-                    key={st}
-                    style={[
-                      styles.statusChip,
-                      dgStatusFilter === st && styles.statusChipActive,
-                    ]}
-                    onPress={() => setDgStatusFilter(st)}
-                  >
-                    <Text style={[
-                      styles.statusChipText,
-                      dgStatusFilter === st && styles.statusChipTextActive,
-                    ]}>{st}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-
-              {/* ── DG Date Range Filter ── */}
               <View style={styles.filterBar}>
                 <TouchableOpacity style={styles.dateChip} onPress={() => setShowDgFromPicker(true)}>
                   <Icon name="calendar-start" size={14} color="#f97316" />
-                  <Text style={styles.dateChipText}>{moment(dgDateFrom).format('DD MMM, HH:mm')}</Text>
+                  <Text style={styles.dateChipText}>{moment(dgDateFrom).format('DD/MM/YYYY')}</Text>
                 </TouchableOpacity>
                 <Text style={styles.dateChipArrow}>→</Text>
                 <TouchableOpacity style={styles.dateChip} onPress={() => setShowDgToPicker(true)}>
                   <Icon name="calendar-end" size={14} color="#f97316" />
-                  <Text style={styles.dateChipText}>{moment(dgDateTo).format('DD MMM, HH:mm')}</Text>
+                  <Text style={styles.dateChipText}>{moment(dgDateTo).format('DD/MM/YYYY')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.applyBtn} onPress={loadDgLogs} disabled={dgLoading}>
                   <Icon name="magnify" size={16} color="#fff" />
                 </TouchableOpacity>
               </View>
 
-              <DatePicker modal open={showDgFromPicker} date={dgDateFrom} mode="datetime"
+              <DatePicker modal open={showDgFromPicker} date={dgDateFrom} mode="date"
                 onConfirm={d => { setShowDgFromPicker(false); setDgDateFrom(d); }}
                 onCancel={() => setShowDgFromPicker(false)} title="DG Report Start Date" />
-              <DatePicker modal open={showDgToPicker} date={dgDateTo} mode="datetime"
+              <DatePicker modal open={showDgToPicker} date={dgDateTo} mode="date"
                 onConfirm={d => { setShowDgToPicker(false); setDgDateTo(d); }}
                 onCancel={() => setShowDgToPicker(false)} title="DG Report End Date" />
+
+              <View style={styles.dgSummaryBox}>
+                <Text style={styles.dgSummaryTitle}>Overview</Text>
+                <TouchableOpacity onPress={loadDgLogs} disabled={dgLoading}>
+                  <Icon name="refresh" size={18} color="#1565C0" />
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.dgOverviewCard}>
+                {[
+                  { label: 'ON Duration', value: formatDuration(dgStats.onDuration) },
+                  { label: 'OFF Duration', value: formatDuration(dgStats.offDuration) },
+                  { label: 'MOVE Duration', value: formatDuration(dgStats.moveDuration) },
+                  { label: 'STOP Duration', value: formatDuration(dgStats.stopDuration) },
+                  { label: 'Total Time', value: formatDuration(dgStats.totalTime) },
+                  { label: 'Move Distance', value: `${dgStats.totalDist.toFixed(2)} km` },
+                ].map((row, idx) => (
+                  <View key={idx} style={styles.dgOverviewRow}>
+                    <Text style={styles.dgOverviewLabel}>{row.label}:</Text>
+                    <Text style={styles.dgOverviewValue}>{row.value}</Text>
+                  </View>
+                ))}
+              </View>
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
+                {['ALL', 'OFF', 'ON', 'MOVE', 'STOPPED'].map(st => (
+                  <TouchableOpacity
+                    key={st}
+                    style={[styles.statusChip, dgStatusFilter === st && styles.statusChipActive]}
+                    onPress={() => setDgStatusFilter(st)}
+                  >
+                    <Text style={[styles.statusChipText, dgStatusFilter === st && styles.statusChipTextActive]}>
+                      {st}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
 
               {dgLoading ? (
                 <ActivityIndicator size="large" color="#1565C0" style={{ marginVertical: 30 }} />
@@ -620,28 +605,89 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                   <Text style={styles.emptyContentText}>No DG activities found for the selected filters</Text>
                 </View>
               ) : (
-                <FlatList
-                  data={dgStatusFilter === 'ALL' ? dgLogs : dgLogs.filter(item => {
-                    const raw = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
-                    if (dgStatusFilter === 'OFF') return raw.includes('OFF') || raw === '0';
-                    if (dgStatusFilter === 'ON') return raw.includes('ON') && !raw.includes('MOTION') || raw === '1';
-                    if (dgStatusFilter === 'MOVE') return raw.includes('MOVE') || raw.includes('MOVING') || raw.includes('MOTION') || raw.includes('TRANSIT');
-                    if (dgStatusFilter === 'STOPPED') return raw.includes('STOP') || raw.includes('IDLE') || raw.includes('PARK');
-                    return true;
-                  })}
-                  keyExtractor={(item, index) => `${item.id || index}`}
-                  renderItem={renderDgLogCard}
-                  scrollEnabled={false}
-                />
+                <View>
+                  <View style={{ paddingHorizontal: 4, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.countText}>Showing {dgLogsToRender.length} logs</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#0284c7' }}>
+                      Total: {finalFilteredDgLogs.length}
+                    </Text>
+                  </View>
+
+                  <FlatList
+                    data={dgLogsToRender}
+                    keyExtractor={(item, index) => `${item.id || index}`}
+                    renderItem={renderDgLogCard}
+                    scrollEnabled={false}
+                  />
+
+                  {totalPages > 1 && (
+                    <View style={styles.paginationContainer}>
+                      <TouchableOpacity
+                        style={[styles.pageBtn, dgPage === 1 && styles.pageBtnDisabled]}
+                        disabled={dgPage === 1}
+                        onPress={() => setDgPage(1)}
+                      >
+                        <Text style={[styles.pageBtnText, dgPage === 1 && styles.pageBtnTextDisabled]}>First</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, dgPage === 1 && styles.pageBtnDisabled]}
+                        disabled={dgPage === 1}
+                        onPress={() => setDgPage(prev => Math.max(1, prev - 1))}
+                      >
+                        <Icon name="chevron-left" size={20} color={dgPage === 1 ? '#cbd5e1' : '#0284c7'} />
+                        <Text style={[styles.pageBtnText, dgPage === 1 && styles.pageBtnTextDisabled]}>Prev</Text>
+                      </TouchableOpacity>
+
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter(p => p === 1 || p === totalPages || Math.abs(p - dgPage) <= 1)
+                        .map((pageNum, idx, arr) => (
+                          <React.Fragment key={pageNum}>
+                            {idx > 0 && arr[idx - 1] !== pageNum - 1 && (
+                              <Text style={{ color: '#94a3b8', paddingHorizontal: 2 }}>…</Text>
+                            )}
+                            <TouchableOpacity
+                              style={[styles.pageNumberBtn, dgPage === pageNum && styles.pageNumberActive]}
+                              onPress={() => setDgPage(pageNum)}
+                            >
+                              <Text style={[styles.pageNumberText, dgPage === pageNum && styles.pageNumberTextActive]}>
+                                {pageNum}
+                              </Text>
+                            </TouchableOpacity>
+                          </React.Fragment>
+                        ))
+                      }
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, !hasMoreDgLogs && styles.pageBtnDisabled]}
+                        disabled={!hasMoreDgLogs}
+                        onPress={() => setDgPage(prev => prev + 1)}
+                      >
+                        <Text style={[styles.pageBtnText, !hasMoreDgLogs && styles.pageBtnTextDisabled]}>Next</Text>
+                        <Icon name="chevron-right" size={20} color={!hasMoreDgLogs ? '#cbd5e1' : '#0284c7'} />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, dgPage === totalPages && styles.pageBtnDisabled]}
+                        disabled={dgPage === totalPages}
+                        onPress={() => setDgPage(totalPages)}
+                      >
+                        <Text style={[styles.pageBtnText, dgPage === totalPages && styles.pageBtnTextDisabled]}>Last</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
               )}
             </View>
           )}
+
         </View>
       </ScrollView>
     </View>
   );
 };
 
+// ─── InfoRow ─────────────────────────────────────────────────────────────────
 const InfoRow = ({ label, value }) => (
   <View style={styles.infoRow}>
     <Text style={styles.infoLabel}>{label}</Text>
@@ -649,22 +695,18 @@ const InfoRow = ({ label, value }) => (
   </View>
 );
 
+// ─── STYLES ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   scroll: { padding: 16, paddingBottom: 40 },
+  segmentContent: {},
+
   profileHeaderCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    elevation: 3,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#FFFFFF', borderRadius: 20,
+    padding: 16, borderWidth: 1, borderColor: '#e2e8f0',
+    elevation: 3, shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8,
     marginBottom: 20,
   },
   largeAvatar: { width: 68, height: 68, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginRight: 16 },
@@ -675,33 +717,23 @@ const styles = StyleSheet.create({
   statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
   statusText: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
 
-  // Quick grid
   quickGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24, gap: 10 },
   gridItem: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    elevation: 2,
-    shadowColor: '#0f172a',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
+    flex: 1, backgroundColor: '#FFFFFF', borderRadius: 16,
+    paddingVertical: 14, alignItems: 'center',
+    borderWidth: 1, borderColor: '#e2e8f0',
+    elevation: 2, shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 6,
   },
   gridIconBg: { width: 44, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 8 },
   gridLabel: { fontSize: 11, fontWeight: '600', color: '#475569' },
 
-  // Segment Tab
   segmentTabBar: { flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 24, padding: 4, marginBottom: 16 },
   segmentBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 20 },
   segmentBtnActive: { backgroundColor: '#FFFFFF', elevation: 2, shadowColor: '#0f172a', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3 },
   segmentBtnText: { fontSize: 11.5, fontWeight: '600', color: '#64748b' },
   segmentBtnTextActive: { color: '#1565C0', fontWeight: '700' },
 
-  // Cards & Rows
   card: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', padding: 16, marginBottom: 16 },
   miniMapContainer: { height: 180, borderRadius: 12, overflow: 'hidden', marginBottom: 14 },
   noMapBox: { height: 120, borderRadius: 12, backgroundColor: '#f1f5f9', justifyContent: 'center', alignItems: 'center', marginBottom: 14 },
@@ -711,7 +743,6 @@ const styles = StyleSheet.create({
   infoLabel: { fontSize: 13, color: '#64748b', fontWeight: '500' },
   infoValue: { fontSize: 13, color: '#0f172a', fontWeight: '600', textAlign: 'right', flex: 1, marginLeft: 12 },
 
-  // Trips
   tripHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
   tripTime: { fontSize: 11, fontWeight: '700', color: '#475569', flex: 1 },
   tripDur: { fontSize: 11, fontWeight: '700', color: '#64748b' },
@@ -719,16 +750,17 @@ const styles = StyleSheet.create({
   tripLocText: { fontSize: 12, color: '#1e293b', fontWeight: '500', flex: 1 },
   tripFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 10, marginTop: 8 },
   tripDist: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
-  playTripBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: '#fff7ed', paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 0.5, borderColor: '#ffedd5' },
-  playTripText: { fontSize: 10.5, fontWeight: '700', color: '#ea580c' },
 
-  // Empty state
   emptyContent: { alignItems: 'center', paddingVertical: 32 },
   emptyContentText: { color: '#64748b', fontSize: 13, fontWeight: '500', marginTop: 10 },
 
-  // DG Log specific
+  dgOverviewCard: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', padding: 12, marginBottom: 12 },
+  dgOverviewRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 },
+  dgOverviewLabel: { fontSize: 12, color: '#64748b' },
+  dgOverviewValue: { fontSize: 12, color: '#0f172a', fontWeight: '600' },
   dgSummaryBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, paddingHorizontal: 4 },
   dgSummaryTitle: { fontSize: 13, fontWeight: '700', color: '#475569' },
+
   logCard: { backgroundColor: '#FFFFFF', borderRadius: 16, borderWidth: 1, borderColor: '#e2e8f0', padding: 14, marginBottom: 12 },
   cardHeader2: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#f1f5f9', paddingBottom: 8, marginBottom: 10 },
   statusPill: { flexDirection: 'row', alignItems: 'center', paddingVertical: 3, paddingHorizontal: 8, borderRadius: 6, marginRight: 10 },
@@ -737,8 +769,8 @@ const styles = StyleSheet.create({
   statusPillMoving: { backgroundColor: '#0284c7' },
   statusPillStop: { backgroundColor: '#f59e0b' },
   statusPillText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700', marginLeft: 4 },
-  logDeviceName: { flex: 1, fontSize: 14, fontWeight: '700', color: '#1e293b' },
-  quickTelemetryRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#f8fafc', borderRadius: 8, padding: 8, marginBottom: 10 },
+  logDeviceName: { fontSize: 13, fontWeight: '700', color: '#1e293b', flex: 1 },
+  quickTelemetryRow: { flexDirection: 'row', justifyContent: 'space-between', backgroundColor: '#f8fafc', borderRadius: 8, padding: 8, marginBottom: 12 },
   telemetryItem: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   telemetryText: { fontSize: 11, fontWeight: '600', color: '#475569', marginLeft: 4 },
   journeyBox: { paddingLeft: 2, marginBottom: 6 },
@@ -753,64 +785,27 @@ const styles = StyleSheet.create({
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   detailLabel: { fontSize: 11, fontWeight: '600', color: '#64748b', flex: 1.1 },
   detailValue: { fontSize: 11, fontWeight: '600', color: '#1e293b', flex: 2, textAlign: 'right' },
-  // ── Filter bar styles ──
-  filterBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 6,
-  },
-  dateChip: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#fff7ed',
-    borderWidth: 1,
-    borderColor: '#fed7aa',
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-  },
-  dateChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#1e293b',
-  },
-  dateChipArrow: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#f97316',
-  },
-  applyBtn: {
-    backgroundColor: '#f97316',
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  statusChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    backgroundColor: '#f1f5f9',
-    marginRight: 8,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-  },
-  statusChipActive: {
-    backgroundColor: '#f97316',
-    borderColor: '#f97316',
-  },
-  statusChipText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#64748b',
-  },
-  statusChipTextActive: {
-    color: '#fff',
-  },
+
+  paginationContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', flexWrap: 'wrap', gap: 6, paddingVertical: 12, marginTop: 8, borderTopWidth: 1, borderTopColor: '#e2e8f0' },
+  pageBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingHorizontal: 10, backgroundColor: '#f8fafc', borderRadius: 8, borderWidth: 1, borderColor: '#e2e8f0' },
+  pageBtnDisabled: { backgroundColor: '#f1f5f9', borderColor: '#f1f5f9' },
+  pageBtnText: { fontSize: 12, fontWeight: '600', color: '#0284c7', marginHorizontal: 2 },
+  pageBtnTextDisabled: { color: '#cbd5e1' },
+  pageNumberBtn: { paddingVertical: 5, paddingHorizontal: 9, borderRadius: 6, borderWidth: 1, borderColor: '#e2e8f0', backgroundColor: '#f8fafc' },
+  pageNumberActive: { backgroundColor: '#0284c7', borderColor: '#0284c7' },
+  pageNumberText: { fontSize: 12, color: '#0284c7', fontWeight: '600' },
+  pageNumberTextActive: { color: '#fff', fontWeight: '700' },
+  countText: { fontSize: 12, color: '#64748b', fontWeight: '600' },
+
+  filterBar: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 6 },
+  dateChip: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#fff7ed', borderWidth: 1, borderColor: '#fed7aa', borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10 },
+  dateChipText: { fontSize: 11, fontWeight: '700', color: '#1e293b' },
+  dateChipArrow: { fontSize: 14, fontWeight: '700', color: '#f97316' },
+  applyBtn: { backgroundColor: '#f97316', width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
+  statusChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20, backgroundColor: '#f1f5f9', marginRight: 8, borderWidth: 1, borderColor: '#e2e8f0' },
+  statusChipActive: { backgroundColor: '#f97316', borderColor: '#f97316' },
+  statusChipText: { fontSize: 11, fontWeight: '700', color: '#64748b' },
+  statusChipTextActive: { color: '#fff' },
 });
 
 export default DeviceDetailScreen;

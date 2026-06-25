@@ -8,28 +8,22 @@ const getSignalInfo = (rssiVal) => {
   if (isNaN(val) || val <= 0) {
     return { icon: 'signal-off', color: '#ef4444' };
   }
-
   let bars = Math.max(0, Math.min(4, val));
   let iconName = 'network-strength-outline';
   if (bars === 1) iconName = 'network-strength-1';
   else if (bars === 2) iconName = 'network-strength-2';
   else if (bars === 3) iconName = 'network-strength-3';
   else if (bars >= 4) iconName = 'network-strength-4';
-
   return { icon: iconName, color: '#10b981' };
 };
 
 const DeviceCard = ({ device, onPress }) => {
   const [address, setAddress] = useState('Loading address...');
   const signalInfo = getSignalInfo(device.rssi);
-
   const statusStr = String(device.status || '').toLowerCase();
   const isOnline = statusStr === 'online';
-
   const isMoving = device.motion_status === 1 || device.motion_status === '1' || device.motion_status === true;
-
   const isDgOn = device.dg_status === 1 || device.dg_status === '1' || device.dg_status === true;
-
   const isCharging = device.battery_status === 1 || device.battery_status === '1' || device.battery_status === true;
 
   useEffect(() => {
@@ -39,7 +33,6 @@ const DeviceCard = ({ device, onPress }) => {
         if (active) setAddress(device.address);
         return;
       }
-
       if (!device.motion_lat || !device.motion_lon || parseFloat(device.motion_lat) === 0) {
         if (active) setAddress('No location fix');
         return;
@@ -68,25 +61,42 @@ const DeviceCard = ({ device, onPress }) => {
     });
   };
 
-  // Determine status color theme
-  let statusColor = '#ef4444'; // Red (offline)
+  // Calculate ignition duration
+  const getIgnitionDuration = () => {
+    if (!device.ignition_on_time) return null;
+    const mins = Math.round((Date.now() - new Date(device.ignition_on_time).getTime()) / 60000);
+    if (mins < 1) return 'just now';
+    return mins >= 60
+      ? `${Math.floor(mins / 60)}h ${mins % 60}m`
+      : `${mins}m`;
+  };
+
+  const ignitionDuration = getIgnitionDuration();
+  const showIgnitionTime = isDgOn && device.ignition_status === 1 && ignitionDuration;
+
+  // Status colors
+  let statusColor = '#ef4444';
   let statusLabel = 'Offline';
   if (isOnline) {
-    statusColor = '#10b981'; // Green
+    statusColor = '#10b981';
     statusLabel = 'Online';
   }
 
   return (
     <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85}>
       <View style={styles.cardBody}>
-        {/* Header Row: Vehicle Icon, Name, status label */}
+        {/* Header Row */}
         <View style={styles.headerRow}>
           <View style={[styles.avatarContainer, { backgroundColor: `${statusColor}15` }]}>
             <Icon name="car" size={26} color={statusColor} />
           </View>
           <View style={styles.titleContainer}>
-            <Text style={styles.deviceName} numberOfLines={1}>{device.name || 'Unknown Vehicle'}</Text>
-            <Text style={styles.deviceId}>{device.uniqueId || device.uniqueid || 'No IMEI'}</Text>
+            <Text style={styles.deviceName} numberOfLines={1}>
+              {device.name || 'Unknown Vehicle'}
+            </Text>
+            <Text style={styles.deviceId}>
+              {device.uniqueId || device.uniqueid || 'No IMEI'}
+            </Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: `${statusColor}15` }]}>
             <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
@@ -94,38 +104,89 @@ const DeviceCard = ({ device, onPress }) => {
           </View>
         </View>
 
-        {/* Telemetry Row Grid */}
+        {/* Telemetry Grid - Improved Layout */}
         <View style={styles.telemetryGrid}>
+          {/* DG Status + Ignition Time (next to each other) */}
           <View style={styles.telItem}>
-            <Icon name="lightning-bolt" size={16} color={isDgOn ? '#10b981' : '#64748b'} />
+            <Icon
+              name="lightning-bolt"
+              size={17}
+              color={isDgOn ? '#10b981' : '#64748b'}
+            />
             <Text style={styles.telLabel}>DG:</Text>
-            <Text style={[styles.telValue, { color: isDgOn ? '#10b981' : '#0f172a' }]}>{isDgOn ? 'ON' : 'OFF'}</Text>
+            <Text style={[styles.telValue, { color: isDgOn ? '#10b981' : '#0f172a' }]}>
+              {isDgOn ? 'ON' : 'OFF'}
+            </Text>
+
+            {/* Ignition Time right next to DG ON */}
+            {showIgnitionTime && (
+              <View style={styles.ignitionTimeContainer}>
+                <Icon name="clock-outline" size={13} color="#10b981" />
+                <Text style={styles.ignitionTimeText}>{ignitionDuration} ago</Text>
+              </View>
+            )}
           </View>
 
+          {/* Moving Status */}
           <View style={styles.telItem}>
-            <Icon name="run" size={16} color={isMoving ? '#10b981' : '#64748b'} />
-            <Text style={styles.telValue}>{isMoving ? 'Moving' : 'Stopped'}</Text>
+            <Icon
+              name="run"
+              size={17}
+              color={isMoving ? '#10b981' : '#64748b'}
+            />
+            <Text style={[styles.telValue, { color: isMoving ? '#10b981' : '#0f172a' }]}>
+              {isMoving ? 'Moving' : 'Stopped'}
+            </Text>
           </View>
 
+          {/* Battery */}
           <View style={styles.telItem}>
-            <Icon name={isCharging ? "battery-charging" : "battery-std"} size={16} color="#0284c7" />
+            <Icon
+              name={isCharging ? "battery-charging" : "battery-std"}
+              size={17}
+              color="#10b981"
+            />
             <Text style={styles.telLabel}>Batt:</Text>
-            <Text style={styles.telValue}>{device.battery_level != null ? `${device.battery_level}%` : '0%'}</Text>
+            <Text style={styles.telValue}>
+              {device.battery_level != null ? `${device.battery_level}%` : '0%'}
+            </Text>
           </View>
 
+          {/* Voltage - Clean placement */}
           <View style={styles.telItem}>
-            <Icon name={signalInfo.icon} size={20} color={signalInfo.color} />
+            <Icon
+              name="flash"
+              size={17}
+              color={device.adc1 != null ? '#f59e0b' : '#64748b'}
+            />
+
+            <Text style={styles.telLabel}>Volt:</Text>
+
+            <Text
+              style={[
+                styles.telValue,
+                { color: device.adc1 != null ? '#f59e0b' : '#0f172a' }
+              ]}
+            >
+              {device.adc1 != null ? `${parseFloat(device.adc1).toFixed(2)}V` : 'N/A'}
+            </Text>
+          </View>
+
+          {/* Signal Strength */}
+          <View style={styles.telItem}>
+            <Icon name={signalInfo.icon} size={18} color={signalInfo.color} />
+            <Text style={styles.telValue}>Signal</Text>
           </View>
         </View>
 
-        {/* Address & Date Footer */}
+        {/* Address & Time Footer */}
         <View style={styles.footer}>
           <View style={styles.addressRow}>
             <Icon name="map-marker-outline" size={15} color="#64748b" style={{ marginRight: 6 }} />
             <Text style={styles.addressText} numberOfLines={1}>{address}</Text>
           </View>
           <View style={styles.timeRow}>
-            <Icon name="clock-outline" size={14} color="#94a3b8" style={{ marginRight: 4 }} />
+            <Icon name="clock-outline" size={14} color="#64748b" style={{ marginRight: 4 }} />
             <Text style={styles.timeText}>{formatDate(device.position_time)}</Text>
           </View>
         </View>
@@ -148,31 +209,121 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.04,
     shadowRadius: 8,
   },
-  cardBody: { padding: 14 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  avatarContainer: { width: 44, height: 44, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  cardBody: {
+    padding: 14
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12
+  },
+  avatarContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12
+  },
   titleContainer: { flex: 1 },
-  deviceName: { fontSize: 15, fontWeight: '700', color: '#0f172a' },
-  deviceId: { fontSize: 11, color: '#64748b', marginTop: 2, fontFamily: 'monospace' },
-  statusBadge: { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 20 },
-  statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 6 },
-  statusText: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  deviceName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a'
+  },
+  deviceId: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 2,
+    fontFamily: 'monospace'
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 20
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 6
+  },
+  statusText: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase'
+  },
   telemetryGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     backgroundColor: '#f8fafc',
-    borderRadius: 10,
-    padding: 10,
+    borderRadius: 12,
+    padding: 12,
     marginBottom: 12,
+    gap: 8,
   },
-  telItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  telLabel: { fontSize: 11, color: '#64748b', fontWeight: '500' },
-  telValue: { fontSize: 11, fontWeight: '700', color: '#0f172a' },
-  footer: { borderTopWidth: 1, borderTopColor: '#f1f5f9', paddingTop: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  addressRow: { flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 10 },
-  addressText: { fontSize: 11, color: '#64748b', fontWeight: '500' },
-  timeRow: { flexDirection: 'row', alignItems: 'center' },
-  timeText: { fontSize: 11, color: '#94a3b8', fontWeight: '500' },
+  telItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 2,
+  },
+  telLabel: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500'
+  },
+  telValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#0f172a'
+  },
+  ignitionTimeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#dcfce7',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    marginLeft: 6,
+    gap: 3,
+  },
+  ignitionTimeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  footer: {
+    borderTopWidth: 1,
+    borderTopColor: '#f1f5f9',
+    paddingTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  addressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10
+  },
+  addressText: {
+    fontSize: 11,
+    color: '#64748b',
+    fontWeight: '500'
+  },
+  timeRow: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+  timeText: {
+    fontSize: 11,
+    color: '#334155',
+    fontWeight: '600'
+  },
 });
 
 export default DeviceCard;
