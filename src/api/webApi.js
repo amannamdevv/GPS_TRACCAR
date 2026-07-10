@@ -92,6 +92,10 @@ const normalizeDeviceData = (rawData) => {
       ? (dev.dg_status === 1 || dev.dg_status === '1' || dev.dg_status === 'ON' || dev.dg_status === true ? 1 : 0)
       : (dev.ignition === 1 || dev.ignition === '1' || dev.ignition === true ? 1 : 0);
 
+    const nearest_indus_id = dev.nearest_indus_id ?? attrs.nearest_indus_id ?? attrs.nearestSite ?? null;
+    const nearest_distance_m = dev.nearest_distance_m ?? attrs.nearest_distance_m ?? attrs.nearestDistance ?? null;
+    const adc1 = dev.adc1 ?? attrs.adc1 ?? attrs.voltage ?? null;
+
     return {
       ...dev,
       id,
@@ -110,6 +114,9 @@ const normalizeDeviceData = (rawData) => {
       ignition_status: dev.ignition === 1 || dev.ignition === '1' || dev.ignition === true ? 1 : 0,
       rssi: dev.rssi ?? null,
       alarm: dev.alarm || null,
+      nearest_indus_id,
+      nearest_distance_m,
+      adc1,
     };
   });
 
@@ -125,6 +132,16 @@ const normalizeDeviceData = (rawData) => {
 // ─── fetchDeviceList ──────────────────────────────────────────────────────────
 export const fetchDeviceList = (filters = {}) => _fetchDeviceList(filters);
 
+export const fetchDeviceLatestMapApi = async (deviceId = null) => {
+  try {
+    const params = deviceId ? { device_id: deviceId } : {};
+    const resp = await webApi.get('/device_latest_map_api/', { params });
+    return resp.data || { towers: [] };
+  } catch (e) {
+    console.warn('[fetchDeviceLatestMapApi] error:', e.message);
+    return { towers: [] };
+  }
+};
 const _fetchDeviceList = async (filters = {}) => {
   try {
     let userDeviceIds = new Set();
@@ -347,15 +364,23 @@ export const fetchDgStatusLogs = async (params = {}) => {
       });
     }
 
+    let finalData = result;
     // Filter: only keep logs for devices that belong to this user
     if (allowedIds.size > 0) {
-      return result.filter(d => {
+      finalData = result.filter(d => {
         const devId = d.deviceid ?? d.device_id ?? d.deviceId;
         return devId != null && allowedIds.has(String(devId));
       });
     }
+    
+    // Extract total count from the raw response for pagination support
+    const rawData = statusResp.status === 'fulfilled' ? statusResp.value?.data : null;
+    const backendCount = rawData?.count || rawData?.total_count || rawData?.totalCount;
 
-    return result;
+    return {
+      data: finalData,
+      totalCount: backendCount !== undefined ? backendCount : finalData.length
+    };
   } catch (e) {
     console.error('[webApi] Failed to fetch DG status logs:', e.message);
     throw e;
@@ -515,8 +540,11 @@ export const getTripsReport = async (deviceId, from, to) => {
       endLon: parseFloat(t.end_longitude ?? t.longitude ?? 0),
       startAddress: t.start_address || null,
       endAddress: t.end_address || null,
-      status: String(t.final_status || t.motion_status || 'UNKNOWN').toUpperCase()
-    })).filter(t => t.status === 'MOVE' || t.status === 'MOVING');
+      status: String(t.final_status || t.motion_status || 'UNKNOWN').toUpperCase(),
+      // Keep all original fields too
+      ...t,
+    }));
+    // No filter — return all records as-is from API
   } catch (e) {
     console.warn('[getTripsReport]', e.message);
     return [];
@@ -552,6 +580,53 @@ export const fetchDgDashboard = async () => {
   } catch (e) {
     console.warn('[fetchDgDashboard]', e.message);
     return { top_moving: [], top_idle: [] };
+  }
+};
+
+// ─── fetchDgDashboardTop10 ───────────────────────────────────────────────────
+export const fetchDgDashboardTop10 = async (options = {}) => {
+  try {
+    const params = {};
+    if (options.start_date) params.start_date = options.start_date;
+    if (options.end_date) params.end_date = options.end_date;
+    
+    const resp = await webApi.get('/dg_dashboard_top10_api/', { 
+      params,
+      timeout: 15000, 
+    });
+    return resp.data || { top_moving: [], top_running: [], top_idle: [] };
+  } catch (e) {
+    console.warn('[fetchDgDashboardTop10]', e.message);
+    return { top_moving: [], top_running: [], top_idle: [] };
+  }
+};
+
+// ─── fetchDgDeviceDetail ───────────────────────────────────────────────────
+export const fetchDgDeviceDetail = async () => {
+  try {
+    const resp = await webApi.get('/dg_device_detail/');
+    return resp.data;
+  } catch (e) {
+    console.warn('[fetchDgDeviceDetail]', e.message);
+    return { data: [] };
+  }
+};
+
+// ─── fetchDgDailySummary ───────────────────────────────────────────────────
+export const fetchDgDailySummary = async (deviceId, startDate, endDate, options = {}) => {
+  try {
+    const params = {
+      deviceid: deviceId,
+      start_date: startDate,
+      end_date: endDate,
+      from_date: startDate,
+      to_date: endDate,
+    };
+    const resp = await webApi.get('/dg_daily_summary_api/', { params, ...options });
+    return resp.data;
+  } catch (e) {
+    console.warn('[fetchDgDailySummary]', e.message);
+    return null;
   }
 };
 

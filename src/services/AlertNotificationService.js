@@ -247,7 +247,7 @@ class AlertNotificationService {
       if (evId > maxNewId) maxNewId = evId;
 
       const evTimeMs = ev.event_time ? new Date(ev.event_time).getTime() : nowMs;
-      if (nowMs - evTimeMs > 12 * 60 * 60 * 1000) continue; // skip >12hr old
+      if (nowMs - evTimeMs > 5 * 60 * 1000) continue; // skip >5 min old
 
       const typeKey = this._normaliseEventType(String(ev.event_type || ''));
       if (!typeKey) continue;
@@ -347,7 +347,7 @@ class AlertNotificationService {
 
       const evTimeMs = alarm.eventtime || alarm.serverTime
         ? new Date(alarm.eventtime || alarm.serverTime).getTime() : nowMs;
-      if (nowMs - evTimeMs > 12 * 60 * 60 * 1000) continue;
+      if (nowMs - evTimeMs > 5 * 60 * 1000) continue; // skip >5 min old
 
       const deviceId = alarm.deviceid ?? alarm.deviceId ?? alarm.device_id;
       if (!this.allowedDeviceIds.has(String(deviceId))) {
@@ -495,6 +495,31 @@ class AlertNotificationService {
     console.log('[AlertService] Poll cycle completed');
   }
 
+  // ── Initial sync – store latest IDs without notifying
+  async _initialSync() {
+    try {
+      const events = await fetchCustomEvents();
+      if (events?.length) {
+        const maxId = events.reduce((m, e) => Math.max(m, parseInt(e.event_id, 10) || 0), 0);
+        if (maxId > 0) await this._saveStoredId(LAST_EVENT_ID_KEY, maxId);
+      }
+    } catch (e) {
+      console.warn('[AlertService] initial sync events error:', e.message);
+    }
+    try {
+      const data = await fetchAlarms();
+      const alarmList = Array.isArray(data) ? data : (data?.data ?? []);
+      if (alarmList?.length) {
+        const maxId = alarmList.reduce((m, a) => Math.max(m, parseInt(a.id, 10) || 0), 0);
+        if (maxId > 0) await this._saveStoredId(LAST_ALARM_ID_KEY, maxId);
+      }
+    } catch (e) {
+      console.warn('[AlertService] initial sync alarms error:', e.message);
+    }
+  }
+
+  // ── Public API ────────────────────────────────────────────────────────────────
+
   // ── Public API ────────────────────────────────────────────────────────────────
   parseAlarm(alarm, deviceName) {
     return this._parseAlarm(alarm, deviceName, null);
@@ -505,6 +530,11 @@ class AlertNotificationService {
     if (this.isPolling) return;
     this.isPolling = true;
     await this._init();
+    // App kholne par hamesha IDs reset karo — taaki purani notifications na aayen
+    // _initialSync fresh se latest IDs save karega, pehla poll sirf naye (last 5 min) events dikhayega
+    await this._saveStoredId(LAST_EVENT_ID_KEY, 0);
+    await this._saveStoredId(LAST_ALARM_ID_KEY, 0);
+    await this._initialSync();
 
     const runLoop = async () => {
       if (!this.isPolling) return;

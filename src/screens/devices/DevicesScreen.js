@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useContext, useRef } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import { AuthContext } from '../../context/AuthContext';
 import {
   View,
@@ -9,12 +10,14 @@ import {
   ActivityIndicator,
   TouchableOpacity,
   StatusBar,
+  AppState,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Header from '../../components/Header';
 import DeviceCard from '../../components/DeviceCard';
-import { fetchDeviceList } from '../../api/webApi';
+import { fetchDeviceList, loginApi } from '../../api/webApi';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DevicesScreen = ({ navigation }) => {
   const { userToken, isLoading } = useContext(AuthContext);
@@ -28,19 +31,55 @@ const DevicesScreen = ({ navigation }) => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('All'); // 'All', 'Online', 'Offline'
 
+  // ─── PAGINATION ─────────────────────────────────────────────────────────────
+  const PAGE_SIZE = 10;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  const abortControllerRef = useRef(null);
+
   const fetchDevices = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    if (isRefresh) {
+      setRefreshing(true);
+      setAllDevices([]); // Clear stale cache immediately when explicitly refreshing
+    } else setLoading(true);
     setError(null);
 
     try {
-      const data = await fetchDeviceList();
-      setAllDevices(data.devices || []);
+      // If pull-to-refresh, silently fetch the latest user info to get any newly assigned device_ids
+      if (isRefresh) {
+        try {
+          const email = await AsyncStorage.getItem('traccar_email');
+          const pass = await AsyncStorage.getItem('traccar_pass');
+          const server = await AsyncStorage.getItem('traccar_server') || '';
+          if (email && pass) {
+            const user = await loginApi(server, email, pass);
+            const info = { ...user, server };
+            await AsyncStorage.setItem('userInfo', JSON.stringify(info));
+          }
+        } catch (authErr) {
+          console.warn('[DevicesScreen] Silent auth refresh failed', authErr);
+        }
+      }
+
+      const data = await fetchDeviceList({}, signal);
+      if (!signal.aborted) {
+        setAllDevices(data.devices || []);
+      }
     } catch (err) {
-      setError(err.message || 'Failed to fetch devices');
+      if (!signal.aborted) {
+        setError(err.message || 'Failed to fetch devices');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!signal.aborted) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
@@ -48,12 +87,20 @@ const DevicesScreen = ({ navigation }) => {
     if (!isLoading && userToken) {
       fetchDevices();
     }
-    // Auto refresh removed to reduce server load
-    // const interval = setInterval(() => {
-    //   fetchDevices(true);
-    // }, 10000);
-    // return () => clearInterval(interval);
-  }, [fetchDevices, isLoading, userToken]);
+    
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active' && userToken) {
+        fetchDevices(true);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [isLoading, userToken, fetchDevices]);
 
   // Counts
   const onlineCount = useMemo(() => allDevices.filter(d => d.status === 'online').length, [allDevices]);
@@ -77,6 +124,11 @@ const DevicesScreen = ({ navigation }) => {
     }
     return list;
   }, [allDevices, activeTab, searchQuery]);
+
+  // Reset pagination when filters or search changes
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [displayedDevices]);
 
   const renderTab = (title, count) => {
     const isActive = activeTab === title;
@@ -155,7 +207,7 @@ const DevicesScreen = ({ navigation }) => {
       {/* Device List */}
       {!loading && !error && (
         <FlatList
-          data={displayedDevices}
+          data={displayedDevices.slice(0, visibleCount)}
           keyExtractor={(item) => item.id.toString()}
           renderItem={({ item }) => (
             <DeviceCard
@@ -164,7 +216,25 @@ const DevicesScreen = ({ navigation }) => {
             />
           )}
           refreshing={refreshing}
-          onRefresh={() => fetchDevices(true)}
+          onRefresh={() => { fetchDevices(true); setVisibleCount(PAGE_SIZE); }}
+          onEndReached={() => {
+            if (visibleCount < displayedDevices.length) {
+              setVisibleCount(prev => Math.min(prev + PAGE_SIZE, displayedDevices.length));
+            }
+          }}
+          onEndReachedThreshold={0.3}
+          ListFooterComponent={
+            visibleCount < displayedDevices.length ? (
+              <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#1565C0" />
+                <Text style={{ fontSize: 12, color: '#94a3b8', marginTop: 4 }}>Loading more...</Text>
+              </View>
+            ) : displayedDevices.length > 0 ? (
+              <Text style={{ textAlign: 'center', fontSize: 11, color: '#94a3b8', paddingVertical: 14 }}>
+                Showing {Math.min(visibleCount, displayedDevices.length)} of {displayedDevices.length} devices
+              </Text>
+            ) : null
+          }
           contentContainerStyle={styles.listContainer}
           ListEmptyComponent={
             <View style={styles.empty}>

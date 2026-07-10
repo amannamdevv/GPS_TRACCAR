@@ -3,14 +3,14 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const Header = ({ title, navigation, showBack = false, rightAction }) => {
+const Header = ({ title, navigation, showBack = false, rightAction, onBackPress }) => {
   const insets = useSafeAreaInsets();
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.leftContainer}>
         {showBack ? (
-          <TouchableOpacity style={styles.iconButton} onPress={() => navigation && navigation.goBack && navigation.goBack()}>
+          <TouchableOpacity style={styles.iconButton} onPress={() => onBackPress ? onBackPress() : (navigation && navigation.goBack && navigation.goBack())}>
             <Icon name="arrow-back-ios" size={20} color="#FFFFFF" />
           </TouchableOpacity>
         ) : (

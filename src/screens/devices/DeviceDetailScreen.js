@@ -9,12 +9,19 @@ import {
   Alert,
   FlatList,
   StatusBar,
+  BackHandler,
+  AppState,
+  TextInput,
+  Clipboard,
+  ToastAndroid,
 } from 'react-native';
-import DatePicker from 'react-native-date-picker';
+import DatePicker from '../../components/CalendarPickerModal';
 import { WebView } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Header from '../../components/Header';
-import { fetchDeviceList, fetchDgStatusLogs, getTripsReport, reverseGeocode } from '../../api/webApi';
+import SummaryDashboard from './SummaryDashboard';
+import DailySummaryDetails from './DailySummaryDetails';
+import { fetchDeviceList, fetchDgStatusLogs, getTripsReport, reverseGeocode, fetchDgDeviceDetail } from '../../api/webApi';
 import moment from 'moment';
 
 const getPositions = async () => [];
@@ -27,16 +34,26 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     lat: Number(initialDevice.lat || initialDevice.motion_lat) || 0,
     lng: Number(initialDevice.lng || initialDevice.motion_lon) || 0,
   }));
+  const [dgDetail, setDgDetail] = useState(null);
 
   const [trips, setTrips] = useState([]);
+  const [allTrips, setAllTrips] = useState([]);
+  const [tripTotalCount, setTripTotalCount] = useState(0);
   const [tripsLoading, setTripsLoading] = useState(false);
   const [activeSegment, setActiveSegment] = useState('LOCATION');
+  const [returnToSummary, setReturnToSummary] = useState(false);
+  const [showDailyDetail, setShowDailyDetail] = useState(false);
+  const [selectedDailyDate, setSelectedDailyDate] = useState(null);
   const [currentAddress, setCurrentAddress] = useState(initialDevice.address || null);
   const [addressLoading, setAddressLoading] = useState(!initialDevice.address);
 
   const [dgLogs, setDgLogs] = useState([]);
+  const [allDgLogs, setAllDgLogs] = useState([]); // full filtered set for in-memory pagination
   const [dgLoading, setDgLoading] = useState(false);
   const [dgTotalCount, setDgTotalCount] = useState(0);
+
+  const [summaryFromDate, setSummaryFromDate] = useState(() => moment().subtract(1, 'days').toDate());
+  const [summaryToDate, setSummaryToDate] = useState(() => moment().subtract(1, 'days').toDate());
 
   const [dgStatusFilter, setDgStatusFilter] = useState('ALL');
   const [dgDateFrom, setDgDateFrom] = useState(() => {
@@ -47,52 +64,93 @@ const DeviceDetailScreen = ({ route, navigation }) => {
   const [showDgToPicker, setShowDgToPicker] = useState(false);
 
   const [tripDateFrom, setTripDateFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 1); d.setHours(0, 0, 0, 0); return d;
+    const d = new Date();
+    d.setHours(0, 0, 0, 0); // start of today
+    return d;
   });
-  const [tripDateTo, setTripDateTo] = useState(new Date());
+  const [tripDateTo, setTripDateTo] = useState(() => {
+    const d = new Date();
+    d.setHours(23, 59, 59, 999); // end of day
+    return d;
+  });
   const [showTripFromPicker, setShowTripFromPicker] = useState(false);
   const [showTripToPicker, setShowTripToPicker] = useState(false);
 
   const [dgPage, setDgPage] = useState(1);
   const DG_PAGE_SIZE = 10;
 
+  const [tripPage, setTripPage] = useState(1);
+  const TRIP_PAGE_SIZE = 10;
+
   const [expandedCardIds, setExpandedCardIds] = useState({});
+
+  // Reverse geocoding on mount if no address
+  useEffect(() => {
+    if (!currentAddress && device.lat && device.lng) {
+      reverseGeocode(device.lat, device.lng).then(addr => {
+        setCurrentAddress(addr || 'Unknown Location');
+        setAddressLoading(false);
+      });
+    }
+  }, [device.lat, device.lng, currentAddress]);
+
+  // Handle hardware back button
+  useEffect(() => {
+    const onBackPress = () => {
+      if (showDailyDetail) {
+        setShowDailyDetail(false);
+        return true;
+      }
+      if (returnToSummary && activeSegment !== 'SUMMARY') {
+        setReturnToSummary(false);
+        setActiveSegment('SUMMARY');
+        return true; // prevent default behavior
+      }
+      return false; // let default behavior happen
+    };
+    const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => {
+      if (subscription?.remove) {
+        subscription.remove();
+      } else if (BackHandler.removeEventListener) {
+        BackHandler.removeEventListener('hardwareBackPress', onBackPress);
+      }
+    };
+  }, [returnToSummary, activeSegment, showDailyDetail]);
+
   const toggleExpand = (id) => setExpandedCardIds(prev => ({ ...prev, [id]: !prev[id] }));
 
-  const finalFilteredDgLogs = React.useMemo(() => {
-    if (dgStatusFilter === 'ALL') return dgLogs;
-    return dgLogs.filter(item => {
-      const raw = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
-      if (dgStatusFilter === 'OFF') return raw.includes('OFF') || raw === '0';
-      if (dgStatusFilter === 'ON') return (raw.includes('ON') && !raw.includes('MOTION')) || raw === '1';
-      if (dgStatusFilter === 'MOVE') return raw.includes('MOVE') || raw.includes('MOVING') || raw.includes('MOTION') || raw.includes('TRANSIT');
-      if (dgStatusFilter === 'STOPPED') return raw.includes('STOP') || raw.includes('IDLE') || raw.includes('PARK');
-      return true;
-    });
-  }, [dgLogs, dgStatusFilter]);
+  const totalPages = Math.max(1, Math.ceil(dgTotalCount / DG_PAGE_SIZE));
+  const hasMoreDgLogs = dgPage < totalPages;
 
-  const dgLogsToRender = React.useMemo(() => {
-    const start = (dgPage - 1) * DG_PAGE_SIZE;
-    return finalFilteredDgLogs.slice(start, start + DG_PAGE_SIZE);
-  }, [finalFilteredDgLogs, dgPage]);
+  // Removed automatic page reset to avoid race conditions. Handled manually on filter changes.
+  useEffect(() => { setTripPage(1); }, [tripDateFrom, tripDateTo]);
 
-  const totalPages = Math.ceil(finalFilteredDgLogs.length / DG_PAGE_SIZE);
-  const hasMoreDgLogs = finalFilteredDgLogs.length > dgPage * DG_PAGE_SIZE;
+  // Note: trips are only loaded on manual search button tap (not auto on date change)
 
-  useEffect(() => { setDgPage(1); }, [dgStatusFilter, dgDateFrom, dgDateTo]);
+  const tripsToRender = React.useMemo(() => {
+    const start = (tripPage - 1) * TRIP_PAGE_SIZE;
+    return allTrips.slice(start, start + TRIP_PAGE_SIZE);
+  }, [allTrips, tripPage]);
+
+  const tripTotalPages = Math.max(1, Math.ceil(tripTotalCount / TRIP_PAGE_SIZE));
+  const hasMoreTrips = tripPage < tripTotalPages;
 
   const formatTime = (raw) => {
     if (!raw || raw === 'N/A') return 'N/A';
     const m = moment(raw);
     if (!m.isValid()) return raw;
-    return m.format('DD/MM/YYYY, h:mm A');
+    return m.format('DD/MM/YYYY, HH:mm:ss');
   };
 
   const formatDuration = (totalMinutes) => {
     const mins = parseInt(totalMinutes, 10) || 0;
-    const h = Math.floor(mins / 60);
+    const d = Math.floor(mins / 1440);
+    const h = Math.floor((mins % 1440) / 60);
     const m = mins % 60;
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    return `${h}h ${m}m`;
   };
 
   useEffect(() => {
@@ -104,8 +162,10 @@ const DeviceDetailScreen = ({ route, navigation }) => {
         lng: newDev.lng || parseFloat(newDev.motion_lon) || 0,
       });
       setCurrentAddress(newDev.address || null);
-      setActiveSegment('LOCATION');
+      setActiveSegment('SUMMARY');
       setTrips([]);
+      setAllTrips([]);
+      setTripTotalCount(0);
       setDgLogs([]);
       setDgTotalCount(0);
     }
@@ -113,65 +173,110 @@ const DeviceDetailScreen = ({ route, navigation }) => {
 
   const refreshPosition = useCallback(async () => {
     try {
-      const data = await fetchDeviceList();
-      const devicesData = data.devices || [];
-      const updatedDev = devicesData.find(d => d.id === device.id);
-      if (updatedDev) {
-        const isMoving = ['moving', 'true', '1', true, 1].includes(
-          typeof updatedDev.motion_status === 'string'
-            ? updatedDev.motion_status.toLowerCase()
-            : updatedDev.motion_status
+      const [data, dgDetailDataResp] = await Promise.allSettled([
+        fetchDeviceList(),
+        fetchDgDeviceDetail()
+      ]);
+
+      if (dgDetailDataResp.status === 'fulfilled' && dgDetailDataResp.value?.data) {
+        const found = dgDetailDataResp.value.data.find(d =>
+          d.deviceid == device.id || d.uniqueid == device.uniqueId || d.uniqueid == device.uniqueid
         );
-        const isCharging = ['charging', 'true', '1', true, 1].includes(
-          typeof updatedDev.battery_status === 'string'
-            ? updatedDev.battery_status.toLowerCase()
-            : updatedDev.battery_status
-        );
-        setDevice(prev => ({
-          ...prev,
-          iccid: updatedDev.iccid,
-          lat: parseFloat(updatedDev.motion_lat) || 0,
-          lng: parseFloat(updatedDev.motion_lon) || 0,
-          address: updatedDev.address,
-          speed: updatedDev.speed || 0,
-          speedKmh: updatedDev.speedKmh || updatedDev.speed || 0,
-          fixTime: updatedDev.position_time,
-          ignition: updatedDev.ignition_status,
-          charge: isCharging,
-          batteryLevel: updatedDev.battery_level,
-          rssi: updatedDev.rssi,
-          motion: isMoving,
-          attributes: {
-            power: updatedDev.battery_level,
-            charge: updatedDev.battery_status,
-            motion: updatedDev.motion_status,
-            status: updatedDev.dg_status,
+        if (found) {
+          setDgDetail(found);
+        }
+      }
+
+      if (data.status === 'fulfilled') {
+        const devicesData = data.value?.devices || data.value?.data || [];
+        const updatedDev = devicesData.find(d => d.id === device.id);
+        if (updatedDev) {
+          const isMoving = ['moving', 'true', '1', true, 1].includes(
+            typeof updatedDev.motion_status === 'string'
+              ? updatedDev.motion_status.toLowerCase()
+              : updatedDev.motion_status
+          );
+          const isCharging = ['charging', 'true', '1', true, 1].includes(
+            typeof updatedDev.battery_status === 'string'
+              ? updatedDev.battery_status.toLowerCase()
+              : updatedDev.battery_status
+          );
+          setDevice(prev => ({
+            ...prev,
+            iccid: updatedDev.iccid,
+            lat: parseFloat(updatedDev.motion_lat) || 0,
+            lng: parseFloat(updatedDev.motion_lon) || 0,
+            address: updatedDev.address,
+            speed: updatedDev.speed || 0,
+            speedKmh: updatedDev.speedKmh || updatedDev.speed || 0,
+            fixTime: updatedDev.position_time,
             ignition: updatedDev.ignition_status,
-            blocked: false,
-          },
-        }));
-        if (updatedDev.address) setCurrentAddress(updatedDev.address);
+            charge: isCharging,
+            batteryLevel: updatedDev.battery_level,
+            rssi: updatedDev.rssi,
+            motion: isMoving,
+            attributes: {
+              power: updatedDev.battery_level,
+              charge: updatedDev.battery_status,
+              motion: updatedDev.motion_status,
+              status: updatedDev.dg_status,
+              ignition: updatedDev.ignition_status,
+              blocked: false,
+            },
+          }));
+          if (updatedDev.address) setCurrentAddress(updatedDev.address);
+        }
       }
     } catch (err) {
       console.warn('Position refresh error:', err.message);
     }
   }, [device.id]);
 
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        refreshPosition();
+      }
+    });
+    return () => subscription.remove();
+  }, [refreshPosition]);
+
   useEffect(() => { refreshPosition(); }, [refreshPosition]);
 
+  // Clean up pending requests when the component unmounts
+  useEffect(() => {
+    return () => {
+      if (abortControllerTripsRef.current) abortControllerTripsRef.current.abort();
+      if (abortControllerDgRef.current) abortControllerDgRef.current.abort();
+    };
+  }, []);
+
+  const abortControllerTripsRef = useRef(null);
   const loadTrips = useCallback(async () => {
-    if (tripsLoading) return;
+    if (abortControllerTripsRef.current) {
+      abortControllerTripsRef.current.abort();
+    }
+    abortControllerTripsRef.current = new AbortController();
+    const signal = abortControllerTripsRef.current.signal;
+
     setTripsLoading(true);
     try {
-      const start = moment(tripDateFrom).format('YYYY-MM-DD HH:mm:ss');
-      const end = moment(tripDateTo).format('YYYY-MM-DD HH:mm:ss');
-      const data = await getTripsReport(device.id, start, end);
-      const fromMs = moment(tripDateFrom).valueOf();
-      const toMs = moment(tripDateTo).valueOf();
+      const startDate = moment(tripDateFrom).format('YYYY-MM-DD');
+      const endDate = moment(tripDateTo).format('YYYY-MM-DD');
+
+      const data = await getTripsReport(device.id, startDate, endDate, {
+        limit: 9999,
+        page: 1
+      });
+      if (signal.aborted) return;
+
+      const fromMs = moment(tripDateFrom).startOf('day').valueOf();
+      const toMs = moment(tripDateTo).endOf('day').valueOf();
       const timeFiltered = (data || []).filter(trip => {
         const t = moment(trip.startTime).valueOf();
         return t >= fromMs && t <= toMs;
       });
+
       const enriched = await Promise.all(timeFiltered.map(async trip => {
         if (!trip.startAddress && trip.startLat)
           trip.startAddress = await reverseGeocode(trip.startLat, trip.startLon);
@@ -179,68 +284,153 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           trip.endAddress = await reverseGeocode(trip.endLat, trip.endLon);
         return trip;
       }));
-      setTrips(enriched);
-    } catch (err) {
-      Alert.alert('Trips Error', err.message);
-    } finally {
-      setTripsLoading(false);
-    }
-  }, [device.id, tripsLoading, tripDateFrom, tripDateTo]);
+      if (signal.aborted) return;
 
-  const loadDgLogs = useCallback(async () => {
-    if (dgLoading) return;
+      // API se jo bhi records aaye wahi dikhao — koi filter nahi
+      setAllTrips(enriched);
+      setTripTotalCount(enriched.length);
+      setTripPage(1);
+
+    } catch (err) {
+      if (!signal.aborted) Alert.alert('Trips Error', err.message);
+    } finally {
+      if (!signal.aborted) setTripsLoading(false);
+    }
+  }, [device.id, tripDateFrom, tripDateTo, tripPage]);
+
+  // Reset trip page when dates change
+  useEffect(() => {
+    setTripPage(1);
+  }, [tripDateFrom, tripDateTo]);
+
+  const abortControllerDgRef = useRef(null);
+  const loadDgLogs = useCallback(async (pageOverride = null, statusOverride = undefined) => {
+    if (abortControllerDgRef.current) {
+      abortControllerDgRef.current.abort();
+    }
+    abortControllerDgRef.current = new AbortController();
+    const signal = abortControllerDgRef.current.signal;
+
+    // Use explicit override values if provided, else fall back to current state
+    const currentPage = pageOverride !== null ? pageOverride : dgPage;
+    const activeStatus = statusOverride !== undefined ? statusOverride : dgStatusFilter;
+
     setDgLoading(true);
     try {
-      const rows = await fetchDgStatusLogs({
-        deviceid: String(device.id),
-        dg_name: device.name,
-        start_date: moment(dgDateFrom).format('YYYY-MM-DD'),
-        end_date: moment(dgDateTo).format('YYYY-MM-DD'),
-        limit: 99999,
-        offset: 0,
-      });
-
+      let startMom = moment(dgDateFrom).startOf('day');
+      const endMom = moment(dgDateTo).endOf('day');
       const targetId = String(device.id);
-      // Use the user-selected date range, not today's date
-      const fromMs = moment(dgDateFrom).startOf('day').valueOf();
-      const toMs = moment(dgDateTo).endOf('day').valueOf();
-      const filtered = (rows || []).filter(item => {
-        const itemId = String(item.deviceid || item.device_id || '');
-        if (itemId && itemId !== targetId) return false;
-        const t = moment(item.start_time || item.position_time).valueOf();
-        if (t < fromMs || t > toMs) return false;
-        return true;
-      });
 
-      setDgLogs(filtered);
-      setDgTotalCount(filtered.length);
+      // Prevent backend error by capping the start date to a maximum of 30 days ago
+      const minAllowedDate = moment().subtract(30, 'days').startOf('day');
+      if (startMom.isBefore(minAllowedDate)) {
+        startMom = minAllowedDate;
+      }
+
+      // Map UI filter labels to backend values
+      let backendStatus = activeStatus;
+      if (activeStatus === 'MOVE') backendStatus = 'MOVING';
+      else if (activeStatus === 'STOPPED') backendStatus = 'STOP';
+
+      const isFiltered = activeStatus && activeStatus !== 'ALL';
+
+      const params = {
+        deviceid: targetId,
+        dg_name: device.name,
+        start_date: startMom.format('YYYY-MM-DD'),
+        end_date: endMom.format('YYYY-MM-DD'),
+        // Always fetch all records to calculate correct full-day overview stats
+        page: 1,
+        limit: 9999,
+      };
+
+      if (isFiltered) {
+        params.status = backendStatus;
+        params.dg_status = backendStatus;
+        params.final_status = backendStatus;
+      }
+
+      const response = await fetchDgStatusLogs(params, signal);
+      if (signal.aborted) return;
+      let raw = Array.isArray(response?.data) ? response.data : (Array.isArray(response) ? response : []);
+
+      // Client-side filter by final_status (safety net in case backend ignores status param)
+      if (isFiltered) {
+        raw = raw.filter(item => {
+          const fs = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
+          if (backendStatus === 'ON') return fs === 'ON' || fs === '1';
+          if (backendStatus === 'OFF') return fs === 'OFF' || fs === '0';
+          if (backendStatus === 'MOVING') return fs === 'MOVING' || fs === 'MOVE' || fs === 'MOTION';
+          if (backendStatus === 'STOP') return fs === 'STOP' || fs === 'STOPPED' || fs === 'IDLE';
+          return true;
+        });
+      }
+
+      setAllDgLogs(raw);
+      setDgTotalCount(raw.length);
+
+      const startIdx = (currentPage - 1) * DG_PAGE_SIZE;
+      const endIdx = startIdx + DG_PAGE_SIZE;
+      setDgLogs(raw.slice(startIdx, endIdx));
+
     } catch (err) {
-      Alert.alert('DG Logs Error', err.message);
+      if (!signal.aborted) {
+        Alert.alert('DG Logs Error', err.message);
+      }
     } finally {
-      setDgLoading(false);
+      if (!signal.aborted) {
+        setDgLoading(false);
+      }
     }
-  }, [device.id, dgLoading, dgDateFrom, dgDateTo]);
+  }, [device.id, device.name, dgDateFrom, dgDateTo, dgPage, DG_PAGE_SIZE, dgStatusFilter]);
 
+  const dgIsFirstRender = useRef(true);
   useEffect(() => {
-    if (activeSegment === 'TRIPS') loadTrips();
-    if (activeSegment === 'DG_REPORT') loadDgLogs();
+    if (dgIsFirstRender.current) {
+      dgIsFirstRender.current = false;
+      return;
+    }
+    if (activeSegment === 'DG_REPORT') {
+      loadDgLogs();
+    }
   }, [activeSegment]);
 
+  useEffect(() => {
+    if (activeSegment === 'DG_REPORT') {
+      const startIdx = (dgPage - 1) * DG_PAGE_SIZE;
+      const endIdx = startIdx + DG_PAGE_SIZE;
+      setDgLogs(allDgLogs.slice(startIdx, endIdx));
+    }
+  }, [dgPage, allDgLogs]);
+
   const dgStats = React.useMemo(() => {
-    let totalDist = 0, totalTime = 0, onDuration = 0, offDuration = 0, moveDuration = 0, stopDuration = 0;
-    dgLogs.forEach(item => {
+    let totalDist = 0, onDuration = 0, offDuration = 0, moveDuration = 0, stopDuration = 0;
+    allDgLogs.forEach(item => {
       const raw = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
-      const duration = Number(item.total_duration_minutes) || 0;
+
+      let duration = 0;
+      if (item.total_duration_hms && typeof item.total_duration_hms === 'string') {
+        const parts = item.total_duration_hms.split(':');
+        if (parts.length >= 3) {
+          duration = parseInt(parts[0] || 0, 10) * 60 + parseInt(parts[1] || 0, 10) + (parseInt(parts[2] || 0, 10) / 60);
+        }
+      } else {
+        duration = Number(item.total_duration_minutes) || 0;
+      }
+
       if (raw.includes('OFF') || raw === '0') offDuration += duration;
       else if (raw.includes('ON') && !raw.includes('MOVE') && !raw.includes('MOTION')) onDuration += duration;
       else if (raw.includes('MOVE') || raw.includes('MOVING') || raw.includes('MOTION') || raw.includes('TRANSIT')) moveDuration += duration;
       else if (raw.includes('STOP') || raw.includes('IDLE') || raw.includes('PARK')) stopDuration += duration;
-      if (item.covered_distance_km) totalDist += Number(item.covered_distance_km);
-      if (item.total_duration_minutes) totalTime += Number(item.total_duration_minutes);
-    });
-    return { totalDist, totalTime, onDuration, offDuration, moveDuration, stopDuration };
-  }, [dgLogs]);
 
+      if (!(raw.includes('OFF') || raw === '0') && item.covered_distance_km) totalDist += Number(item.covered_distance_km);
+    });
+
+    const days = moment(dgDateTo).startOf('day').diff(moment(dgDateFrom).startOf('day'), 'days') + 1;
+    const totalTime = Math.max(1, days) * 24 * 60;
+
+    return { totalDist, totalTime, onDuration, offDuration, moveDuration, stopDuration };
+  }, [allDgLogs, dgDateFrom, dgDateTo]);
   const attr = device.attributes || {};
   const ignition = device.ignition ?? attr.ignition ?? null;
   const charge = device.charge ?? attr.charge ?? null;
@@ -259,6 +449,28 @@ const DeviceDetailScreen = ({ route, navigation }) => {
     if (isMoving) { statusColor = '#10b981'; statusLabel = 'Moving'; }
     else { statusColor = '#0284c7'; statusLabel = 'Online'; }
   }
+
+  // ─── DUMMY SUMMARY DATA ───────────────────────────────────────────────────
+  const summaryData = {
+    distance: '154.32 km',
+    runningTime: '23h 53m',
+    idleTime: '02h 10m',
+    stopTime: '21h 05m',
+    tripCount: 16,
+    avgSpeed: '42 km/h',
+    maxSpeed: '88 km/h',
+    overspeed: 2,
+    startAddress: 'Civil Lines, Jaipur, RJ',
+    endAddress: 'Sitapura Industrial Area, Jaipur, RJ',
+    startTime: '08:06 AM',
+    endTime: '08:59 PM',
+    driverName: 'Rakesh Kumar',
+    odometer: '25,862.45 km',
+    engineHours: '10h 25m',
+    runningPct: 49,
+    idlePct: 5,
+    stopPct: 46
+  };
 
   // ─── DG Log Card ──────────────────────────────────────────────────────────
   const renderDgLogCard = ({ item }) => {
@@ -283,19 +495,34 @@ const DeviceDetailScreen = ({ route, navigation }) => {
             <Icon name={iconName} size={13} color="#FFF" />
             <Text style={styles.statusPillText}>{cardStatusLabel}</Text>
           </View>
-          <Text style={styles.logDeviceName} numberOfLines={1}>
-            {item.dg_name || item.device_name || `ID: ${item.deviceid}`}
-          </Text>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={[styles.logDeviceName, { flex: 1, marginRight: 8 }]} numberOfLines={1}>
+              {item.dg_name || item.device_name || `ID: ${item.deviceid}`}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '600' }}>
+                IMEI: {item.uniqueid || ''}
+              </Text>
+              {item.uniqueid ? (
+                <TouchableOpacity onPress={() => {
+                  Clipboard.setString(item.uniqueid);
+                  ToastAndroid.show('IMEI copied!', ToastAndroid.SHORT);
+                }} style={{ padding: 4, marginLeft: 2 }}>
+                  <Icon name="content-copy" size={14} color="#0284c7" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
         </View>
 
         <View style={styles.quickTelemetryRow}>
           <View style={styles.telemetryItem}>
             <Icon name="clock-outline" size={15} color="#64748b" />
-            <Text style={styles.telemetryText}>{formatDuration(item.total_duration_minutes)}</Text>
+            <Text style={styles.telemetryText}>{item.total_duration_hms || '00:00:00'}</Text>
           </View>
           <View style={styles.telemetryItem}>
             <Icon name="road-variant" size={15} color="#64748b" />
-            <Text style={styles.telemetryText}>{item.covered_distance_km ?? 0} KM</Text>
+            <Text style={styles.telemetryText}>{(rawStatus.includes('OFF') || rawStatus === '0') ? 0 : (item.covered_distance_km ?? 0)} KM</Text>
           </View>
           <View style={[styles.telemetryItem, { flex: 1.5 }]}>
             <Icon name="transmission-tower" size={15} color="#64748b" />
@@ -351,8 +578,10 @@ const DeviceDetailScreen = ({ route, navigation }) => {
               { label: '👤 AOM', value: `${item.aom_name || 'N/A'}${item.aom_number ? ` (${item.aom_number})` : ''}` },
               { label: '🏢 Client Name', value: item.client_name || 'N/A' },
 
-              // { label: '⏱ Total Duration', value: item.total_duration_minutes != null ? `${item.total_duration_minutes} mins` : 'N/A' },
+              // { label: '⏱ Total Duration', value: item.duration_minutes ? item.duration_minutes.split('.')[0] : (item.total_duration_minutes != null ? `${item.total_duration_minutes} mins` : 'N/A') },
               // { label: '🔗 Merged Rows', value: item.merged_rows != null ? String(item.merged_rows) : 'N/A' },
+              { label: '⚡ Ext V Start', value: item.start_adc1 != null ? `${parseFloat(item.start_adc1).toFixed(2)} V` : 'N/A' },
+              { label: '⚡ Ext V End', value: item.end_adc1 != null ? `${parseFloat(item.end_adc1).toFixed(2)} V` : 'N/A' },
               { label: '📡 GPS Install Date', value: item.gps_install_date ? moment(item.gps_install_date).format('DD/MM/YYYY') : 'N/A' },
             ].map((row, idx) => (
               <View key={idx} style={styles.detailRow}>
@@ -367,11 +596,71 @@ const DeviceDetailScreen = ({ route, navigation }) => {
   };
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
+  if (showDailyDetail) {
+    return (
+      <DailySummaryDetails
+        onBack={() => setShowDailyDetail(false)}
+        deviceName={device.name}
+        deviceId={device.id}
+        initialDate={selectedDailyDate}
+        onOpenPlayback={(dateStr) => {
+          navigation.navigate('Playback', {
+            device: initialDevice,
+            initialDate: dateStr
+          });
+        }}
+        onGoToDgReport={(status, startD, endD) => {
+          setDgStatusFilter(status);
+          setDgDateFrom(new Date(startD));
+          setDgDateTo(new Date(endD));
+          setReturnToSummary(true);
+          setShowDailyDetail(false);
+          setActiveSegment('DG_REPORT');
+        }}
+      />
+    );
+  }
+
+  if (activeSegment === 'SUMMARY') {
+    return (
+      <SummaryDashboard
+        onOpenDaily={(dateStr) => {
+          setSelectedDailyDate(dateStr);
+          setShowDailyDetail(true);
+        }}
+        onBackToMap={() => setActiveSegment('LOCATION')}
+        onGoToDgReport={(status, startD, endD) => {
+          setDgStatusFilter(status);
+          setDgDateFrom(new Date(startD));
+          setDgDateTo(new Date(endD));
+          setReturnToSummary(true);
+          setActiveSegment('DG_REPORT');
+        }}
+        initialFromDate={summaryFromDate}
+        initialToDate={summaryToDate}
+        onDatesChange={(fromD, toD) => {
+          setSummaryFromDate(fromD);
+          setSummaryToDate(toD);
+        }}
+        deviceName={device.name}
+        deviceId={device.id}
+      />
+    );
+  }
+
+  const handleHeaderBack = () => {
+    if (returnToSummary) {
+      setReturnToSummary(false);
+      setActiveSegment('SUMMARY');
+    } else {
+      navigation && navigation.goBack && navigation.goBack();
+    }
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
-      <Header title="DG Console" navigation={navigation} showBack />
-
+      <Header title="DG Console" navigation={navigation} showBack onBackPress={handleHeaderBack} />
       <ScrollView contentContainerStyle={styles.scroll}>
 
         {/* ── Profile Card ── */}
@@ -413,8 +702,9 @@ const DeviceDetailScreen = ({ route, navigation }) => {
         {/* ── Segment Tab Bar ── */}
         <View style={styles.segmentTabBar}>
           {[
+            { key: 'SUMMARY', label: 'Summary' },
             { key: 'LOCATION', label: 'Map' },
-            { key: 'TRIPS', label: 'Trips' },
+            // { key: 'TRIPS', label: 'Trips' }, // Hidden as per user request
             { key: 'DG_REPORT', label: 'DG Report' },
           ].map(seg => (
             <TouchableOpacity
@@ -429,7 +719,8 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           ))}
         </View>
 
-        {/* ── Segment Content ── */}
+        {/* ── Segment Bodies ── */}
+
         <View style={styles.segmentContent}>
 
           {/* ════ LOCATION ════ */}
@@ -478,23 +769,39 @@ const DeviceDetailScreen = ({ route, navigation }) => {
               <View style={styles.filterBar}>
                 <TouchableOpacity style={styles.dateChip} onPress={() => setShowTripFromPicker(true)}>
                   <Icon name="calendar-start" size={14} color="#f97316" />
-                  <Text style={styles.dateChipText}>{moment(tripDateFrom).format('DD MMM, HH:mm')}</Text>
+                  <Text style={styles.dateChipText}>{moment(tripDateFrom).format('DD/MM/YYYY')}</Text>
                 </TouchableOpacity>
                 <Text style={styles.dateChipArrow}>→</Text>
                 <TouchableOpacity style={styles.dateChip} onPress={() => setShowTripToPicker(true)}>
                   <Icon name="calendar-end" size={14} color="#f97316" />
-                  <Text style={styles.dateChipText}>{moment(tripDateTo).format('DD MMM, HH:mm')}</Text>
+                  <Text style={styles.dateChipText}>{moment(tripDateTo).format('DD/MM/YYYY')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.applyBtn} onPress={loadTrips} disabled={tripsLoading}>
                   <Icon name="magnify" size={16} color="#fff" />
                 </TouchableOpacity>
               </View>
 
-              <DatePicker modal open={showTripFromPicker} date={tripDateFrom} mode="datetime"
-                onConfirm={d => { setShowTripFromPicker(false); setTripDateFrom(d); }}
+              <DatePicker modal open={showTripFromPicker} date={tripDateFrom} mode="date"
+                minimumDate={moment(tripDateTo).subtract(30, 'days').toDate()}
+                maximumDate={new Date()}
+                onConfirm={d => {
+                  const from = new Date(d);
+                  from.setHours(0, 0, 0, 0);
+                  setShowTripFromPicker(false);
+                  setTripDateFrom(from);
+                  setTripPage(1);
+                }}
                 onCancel={() => setShowTripFromPicker(false)} title="Trip Start Date" />
-              <DatePicker modal open={showTripToPicker} date={tripDateTo} mode="datetime"
-                onConfirm={d => { setShowTripToPicker(false); setTripDateTo(d); }}
+              <DatePicker modal open={showTripToPicker} date={tripDateTo} mode="date"
+                minimumDate={moment(tripDateFrom).toDate()}
+                maximumDate={moment(tripDateFrom).add(30, 'days').toDate()}
+                onConfirm={d => {
+                  const to = new Date(d);
+                  to.setHours(23, 59, 59, 999);
+                  setShowTripToPicker(false);
+                  setTripDateTo(to);
+                  setTripPage(1);
+                }}
                 onCancel={() => setShowTripToPicker(false)} title="Trip End Date" />
 
               {tripsLoading ? (
@@ -505,31 +812,103 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                   <Text style={styles.emptyContentText}>No trips found for the selected date range</Text>
                 </View>
               ) : (
-                trips.map((trip, idx) => (
-                  <View key={idx} style={[styles.card, { padding: 14, marginBottom: 12 }]}>
-                    <View style={styles.tripHeader}>
-                      <Text style={[styles.tripTime, {
-                        fontWeight: 'bold',
-                        color: trip.status === 'OFF' ? '#ef4444'
-                          : (trip.status === 'MOVE' || trip.status === 'MOVING') ? '#10b981'
-                            : '#facc15',
-                      }]}>{trip.status}</Text>
-                      <Text style={styles.tripTime}>{formatTime(trip.startTime)} – {formatTime(trip.endTime)}</Text>
-                      <Text style={styles.tripDur}>{Math.round(trip.duration / 60)}m</Text>
-                    </View>
-                    <View style={styles.tripRouteRow}>
-                      <Icon name="play-circle" size={14} color="#10b981" />
-                      <Text style={styles.tripLocText} numberOfLines={1}>{trip.startAddress || 'Loading...'}</Text>
-                    </View>
-                    <View style={styles.tripRouteRow}>
-                      <Icon name="stop-circle" size={14} color="#ef4444" />
-                      <Text style={styles.tripLocText} numberOfLines={1}>{trip.endAddress || 'Loading...'}</Text>
-                    </View>
-                    <View style={styles.tripFooter}>
-                      <Text style={styles.tripDist}>{(trip.distance / 1000).toFixed(2)} km</Text>
-                    </View>
+                <View>
+                  <View style={{ paddingHorizontal: 4, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Text style={styles.countText}>Showing {tripsToRender.length} of {tripTotalCount} trips</Text>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#0284c7' }}>
+                      Page {tripPage}/{tripTotalPages}
+                    </Text>
                   </View>
-                ))
+
+                  <FlatList
+                    data={tripsToRender}
+                    keyExtractor={(item, idx) => `trip-${idx}`}
+                    scrollEnabled={false}
+                    renderItem={({ item: trip, index: idx }) => (
+                      <View key={idx} style={[styles.card, { padding: 14, marginBottom: 12 }]}>
+                        <View style={styles.tripHeader}>
+                          <Text style={[styles.tripTime, {
+                            fontWeight: 'bold',
+                            color: trip.status === 'OFF' ? '#ef4444'
+                              : (trip.status === 'MOVE' || trip.status === 'MOVING') ? '#10b981'
+                                : '#facc15',
+                          }]}>{trip.status}</Text>
+                          <Text style={styles.tripTime}>{formatTime(trip.startTime)} – {formatTime(trip.endTime)}</Text>
+                          <Text style={styles.tripDur}>{trip.durationHms ? trip.durationHms : formatDuration(trip.duration / 60)}</Text>
+                        </View>
+                        <View style={styles.tripRouteRow}>
+                          <Icon name="play-circle" size={14} color="#10b981" />
+                          <Text style={styles.tripLocText} numberOfLines={1}>{trip.startAddress || 'Loading...'}</Text>
+                        </View>
+                        <View style={styles.tripRouteRow}>
+                          <Icon name="stop-circle" size={14} color="#ef4444" />
+                          <Text style={styles.tripLocText} numberOfLines={1}>{trip.endAddress || 'Loading...'}</Text>
+                        </View>
+                        <View style={styles.tripFooter}>
+                          <Text style={styles.tripDist}>{(trip.distance / 1000).toFixed(2)} km</Text>
+                        </View>
+                      </View>
+                    )}
+                  />
+
+                  {tripTotalPages > 1 && (
+                    <View style={styles.paginationContainer}>
+                      <TouchableOpacity
+                        style={[styles.pageBtn, (tripPage === 1 || tripsLoading) && styles.pageBtnDisabled]}
+                        disabled={tripPage === 1 || tripsLoading}
+                        onPress={() => setTripPage(1)}
+                      >
+                        <Text style={[styles.pageBtnText, tripPage === 1 && styles.pageBtnTextDisabled]}>First</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, (tripPage === 1 || tripsLoading) && styles.pageBtnDisabled]}
+                        disabled={tripPage === 1 || tripsLoading}
+                        onPress={() => setTripPage(prev => Math.max(1, prev - 1))}
+                      >
+                        <Icon name="chevron-left" size={20} color={tripPage === 1 ? '#cbd5e1' : '#0284c7'} />
+                        <Text style={[styles.pageBtnText, tripPage === 1 && styles.pageBtnTextDisabled]}>Prev</Text>
+                      </TouchableOpacity>
+
+                      {Array.from({ length: tripTotalPages }, (_, i) => i + 1)
+                        .filter(p => p === 1 || p === tripTotalPages || Math.abs(p - tripPage) <= 1)
+                        .map((pageNum, idx, arr) => (
+                          <React.Fragment key={pageNum}>
+                            {idx > 0 && arr[idx - 1] !== pageNum - 1 && (
+                              <Text style={{ color: '#94a3b8', paddingHorizontal: 2 }}>…</Text>
+                            )}
+                            <TouchableOpacity
+                              style={[styles.pageNumberBtn, tripPage === pageNum && styles.pageNumberActive]}
+                              onPress={() => setTripPage(pageNum)}
+                              disabled={tripsLoading}
+                            >
+                              <Text style={[styles.pageNumberText, tripPage === pageNum && styles.pageNumberTextActive]}>
+                                {pageNum}
+                              </Text>
+                            </TouchableOpacity>
+                          </React.Fragment>
+                        ))
+                      }
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, (!hasMoreTrips || tripsLoading) && styles.pageBtnDisabled]}
+                        disabled={!hasMoreTrips || tripsLoading}
+                        onPress={() => setTripPage(prev => prev + 1)}
+                      >
+                        <Text style={[styles.pageBtnText, !hasMoreTrips && styles.pageBtnTextDisabled]}>Next</Text>
+                        <Icon name="chevron-right" size={20} color={!hasMoreTrips ? '#cbd5e1' : '#0284c7'} />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, (tripPage === tripTotalPages || tripsLoading) && styles.pageBtnDisabled]}
+                        disabled={tripPage === tripTotalPages || tripsLoading}
+                        onPress={() => setTripPage(tripTotalPages)}
+                      >
+                        <Text style={[styles.pageBtnText, tripPage === tripTotalPages && styles.pageBtnTextDisabled]}>Last</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
               )}
             </View>
           )}
@@ -548,39 +927,52 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                   <Icon name="calendar-end" size={14} color="#f97316" />
                   <Text style={styles.dateChipText}>{moment(dgDateTo).format('DD/MM/YYYY')}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.applyBtn} onPress={loadDgLogs} disabled={dgLoading}>
+                <TouchableOpacity style={styles.applyBtn} onPress={() => { setDgPage(1); loadDgLogs(); }} disabled={dgLoading}>
                   <Icon name="magnify" size={16} color="#fff" />
                 </TouchableOpacity>
               </View>
 
               <DatePicker modal open={showDgFromPicker} date={dgDateFrom} mode="date"
+                minimumDate={moment(dgDateTo).subtract(30, 'days').toDate()}
+                maximumDate={moment.min(moment(), moment(dgDateTo)).toDate()}
                 onConfirm={d => { setShowDgFromPicker(false); setDgDateFrom(d); }}
                 onCancel={() => setShowDgFromPicker(false)} title="DG Report Start Date" />
               <DatePicker modal open={showDgToPicker} date={dgDateTo} mode="date"
+                minimumDate={moment(dgDateFrom).toDate()}
+                maximumDate={moment.min(moment(), moment(dgDateFrom).add(30, 'days')).toDate()}
                 onConfirm={d => { setShowDgToPicker(false); setDgDateTo(d); }}
                 onCancel={() => setShowDgToPicker(false)} title="DG Report End Date" />
 
               <View style={styles.dgSummaryBox}>
                 <Text style={styles.dgSummaryTitle}>Overview</Text>
-                <TouchableOpacity onPress={loadDgLogs} disabled={dgLoading}>
+                <TouchableOpacity onPress={() => { setDgPage(1); loadDgLogs(); }} disabled={dgLoading}>
                   <Icon name="refresh" size={18} color="#1565C0" />
                 </TouchableOpacity>
               </View>
 
-              <View style={styles.dgOverviewCard}>
-                {[
-                  { label: 'ON Duration', value: formatDuration(dgStats.onDuration) },
-                  { label: 'OFF Duration', value: formatDuration(dgStats.offDuration) },
-                  { label: 'MOVE Duration', value: formatDuration(dgStats.moveDuration) },
-                  { label: 'STOP Duration', value: formatDuration(dgStats.stopDuration) },
-                  { label: 'Total Time', value: formatDuration(dgStats.totalTime) },
-                  { label: 'Move Distance', value: `${dgStats.totalDist.toFixed(2)} km` },
-                ].map((row, idx) => (
-                  <View key={idx} style={styles.dgOverviewRow}>
-                    <Text style={styles.dgOverviewLabel}>{row.label}:</Text>
-                    <Text style={styles.dgOverviewValue}>{row.value}</Text>
-                  </View>
-                ))}
+              <View style={styles.card}>
+                <View style={styles.summaryGrid}>
+                  <SummaryCard icon="timer-play" title="ON Time" value={formatDuration(dgStats.onDuration)} color="#10b981" />
+                  <SummaryCard icon="timer-sand" title="OFF Time" value={formatDuration(dgStats.offDuration)} color="#ef4444" />
+                  <SummaryCard icon="truck-delivery-outline" title="Move Time" value={formatDuration(dgStats.moveDuration)} color="#0284c7" />
+                  <SummaryCard icon="stop-circle-outline" title="Stop Time" value={formatDuration(dgStats.stopDuration)} color="#f59e0b" />
+                  <SummaryCard icon="clock-outline" title="Total Time" value={formatDuration(dgStats.totalTime)} color="#8b5cf6" />
+                  <SummaryCard icon="map-marker-distance" title="Move Dist" value={`${dgStats.totalDist.toFixed(2)} km`} color="#1565C0" />
+                </View>
+
+                <Text style={[styles.cardTitle, { marginTop: 10 }]}>Day Overview</Text>
+                <View style={styles.progressBarContainer}>
+                  <View style={[styles.progressSegment, { backgroundColor: '#10b981', flex: dgStats.onDuration || 1 }]} />
+                  <View style={[styles.progressSegment, { backgroundColor: '#0284c7', flex: dgStats.moveDuration || 1 }]} />
+                  <View style={[styles.progressSegment, { backgroundColor: '#f59e0b', flex: dgStats.stopDuration || 1 }]} />
+                  <View style={[styles.progressSegment, { backgroundColor: '#ef4444', flex: dgStats.offDuration || 1 }]} />
+                </View>
+                <View style={styles.legendContainer}>
+                  <LegendItem color="#10b981" label="ON" value={formatDuration(dgStats.onDuration)} />
+                  <LegendItem color="#0284c7" label="Moving" value={formatDuration(dgStats.moveDuration)} />
+                  <LegendItem color="#f59e0b" label="Stopped" value={formatDuration(dgStats.stopDuration)} />
+                  <LegendItem color="#ef4444" label="OFF" value={formatDuration(dgStats.offDuration)} />
+                </View>
               </View>
 
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 10 }}>
@@ -588,7 +980,12 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                   <TouchableOpacity
                     key={st}
                     style={[styles.statusChip, dgStatusFilter === st && styles.statusChipActive]}
-                    onPress={() => setDgStatusFilter(st)}
+                    onPress={() => {
+                      setDgStatusFilter(st);
+                      setDgPage(1);
+                      // Pass new status explicitly so it's used immediately (avoid stale closure)
+                      loadDgLogs(1, st);
+                    }}
                   >
                     <Text style={[styles.statusChipText, dgStatusFilter === st && styles.statusChipTextActive]}>
                       {st}
@@ -597,9 +994,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                 ))}
               </ScrollView>
 
-              {dgLoading ? (
-                <ActivityIndicator size="large" color="#1565C0" style={{ marginVertical: 30 }} />
-              ) : dgLogs.length === 0 ? (
+              {dgLogs.length === 0 && !dgLoading ? (
                 <View style={styles.emptyContent}>
                   <Icon name="engine-off" size={40} color="#cbd5e1" />
                   <Text style={styles.emptyContentText}>No DG activities found for the selected filters</Text>
@@ -607,14 +1002,17 @@ const DeviceDetailScreen = ({ route, navigation }) => {
               ) : (
                 <View>
                   <View style={{ paddingHorizontal: 4, paddingBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <Text style={styles.countText}>Showing {dgLogsToRender.length} logs</Text>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: '#0284c7' }}>
-                      Total: {finalFilteredDgLogs.length}
-                    </Text>
+                    <Text style={styles.countText}>Showing {dgLogs.length} logs</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      {dgLoading && <ActivityIndicator size="small" color="#1565C0" style={{ marginRight: 8 }} />}
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#0284c7' }}>
+                        Total: {dgTotalCount}
+                      </Text>
+                    </View>
                   </View>
 
                   <FlatList
-                    data={dgLogsToRender}
+                    data={dgLogs}
                     keyExtractor={(item, index) => `${item.id || index}`}
                     renderItem={renderDgLogCard}
                     scrollEnabled={false}
@@ -623,16 +1021,16 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                   {totalPages > 1 && (
                     <View style={styles.paginationContainer}>
                       <TouchableOpacity
-                        style={[styles.pageBtn, dgPage === 1 && styles.pageBtnDisabled]}
-                        disabled={dgPage === 1}
+                        style={[styles.pageBtn, (dgPage === 1 || dgLoading) && styles.pageBtnDisabled]}
+                        disabled={dgPage === 1 || dgLoading}
                         onPress={() => setDgPage(1)}
                       >
                         <Text style={[styles.pageBtnText, dgPage === 1 && styles.pageBtnTextDisabled]}>First</Text>
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.pageBtn, dgPage === 1 && styles.pageBtnDisabled]}
-                        disabled={dgPage === 1}
+                        style={[styles.pageBtn, (dgPage === 1 || dgLoading) && styles.pageBtnDisabled]}
+                        disabled={dgPage === 1 || dgLoading}
                         onPress={() => setDgPage(prev => Math.max(1, prev - 1))}
                       >
                         <Icon name="chevron-left" size={20} color={dgPage === 1 ? '#cbd5e1' : '#0284c7'} />
@@ -647,7 +1045,8 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                               <Text style={{ color: '#94a3b8', paddingHorizontal: 2 }}>…</Text>
                             )}
                             <TouchableOpacity
-                              style={[styles.pageNumberBtn, dgPage === pageNum && styles.pageNumberActive]}
+                              style={[styles.pageNumberBtn, dgPage === pageNum && styles.pageNumberActive, dgLoading && { opacity: 0.5 }]}
+                              disabled={dgLoading}
                               onPress={() => setDgPage(pageNum)}
                             >
                               <Text style={[styles.pageNumberText, dgPage === pageNum && styles.pageNumberTextActive]}>
@@ -659,8 +1058,8 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                       }
 
                       <TouchableOpacity
-                        style={[styles.pageBtn, !hasMoreDgLogs && styles.pageBtnDisabled]}
-                        disabled={!hasMoreDgLogs}
+                        style={[styles.pageBtn, (!hasMoreDgLogs || dgLoading) && styles.pageBtnDisabled]}
+                        disabled={!hasMoreDgLogs || dgLoading}
                         onPress={() => setDgPage(prev => prev + 1)}
                       >
                         <Text style={[styles.pageBtnText, !hasMoreDgLogs && styles.pageBtnTextDisabled]}>Next</Text>
@@ -668,8 +1067,8 @@ const DeviceDetailScreen = ({ route, navigation }) => {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.pageBtn, dgPage === totalPages && styles.pageBtnDisabled]}
-                        disabled={dgPage === totalPages}
+                        style={[styles.pageBtn, (dgPage === totalPages || dgLoading) && styles.pageBtnDisabled]}
+                        disabled={dgPage === totalPages || dgLoading}
                         onPress={() => setDgPage(totalPages)}
                       >
                         <Text style={[styles.pageBtnText, dgPage === totalPages && styles.pageBtnTextDisabled]}>Last</Text>
@@ -695,11 +1094,129 @@ const InfoRow = ({ label, value }) => (
   </View>
 );
 
+// ─── Summary UI Components ───────────────────────────────────────────────────
+const SummaryCard = ({ icon, title, value, color }) => (
+  <View style={styles.summaryCard}>
+    <View style={[styles.summaryCardIcon, { backgroundColor: `${color}15` }]}>
+      <Icon name={icon} size={20} color={color} />
+    </View>
+    <View style={styles.summaryCardContent}>
+      <Text style={styles.summaryCardTitle}>{title}</Text>
+      <Text style={styles.summaryCardValue}>{value}</Text>
+    </View>
+  </View>
+);
+
+const LegendItem = ({ color, label, value }) => (
+  <View style={styles.legendItem}>
+    <View style={[styles.legendColor, { backgroundColor: color }]} />
+    <View>
+      <Text style={styles.legendLabel}>{label}</Text>
+      <Text style={styles.legendValue}>{value}</Text>
+    </View>
+  </View>
+);
+
+const AddInfoItem = ({ icon, label, value }) => (
+  <View style={styles.addInfoItem}>
+    <Icon name={icon} size={18} color="#64748b" style={{ marginRight: 8, marginTop: 2 }} />
+    <View style={{ flex: 1 }}>
+      <Text style={styles.addInfoLabel}>{label}</Text>
+      <Text style={styles.addInfoValue} numberOfLines={1}>{value}</Text>
+    </View>
+  </View>
+);
+
 // ─── STYLES ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   scroll: { padding: 16, paddingBottom: 40 },
   segmentContent: {},
+
+  summaryFullPage: {
+    backgroundColor: '#f1f5f9',
+    marginHorizontal: -16, // to take full width inside scroll
+    marginTop: -16,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    overflow: 'hidden',
+  },
+  summaryPageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0f172a',
+    padding: 16,
+    paddingTop: 20,
+  },
+  summaryPageTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  subTabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#0f172a',
+    paddingBottom: 8,
+  },
+  subTabBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 3,
+    borderBottomColor: 'transparent',
+  },
+  subTabBtnActive: {
+    borderBottomColor: '#38bdf8',
+  },
+  subTabText: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  subTabTextActive: {
+    color: '#38bdf8',
+    fontWeight: '700',
+  },
+  subTabContent: {
+    backgroundColor: '#f8fafc',
+    minHeight: 400,
+  },
+
+  summaryDateHeader: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fff', padding: 12, borderRadius: 12, marginBottom: 16, borderWidth: 1, borderColor: '#e2e8f0' },
+  summaryDateText: { flex: 1, fontSize: 15, fontWeight: '700', color: '#1e293b', marginLeft: 8 },
+  todayBadge: { backgroundColor: '#dcfce7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  todayBadgeText: { color: '#166534', fontSize: 11, fontWeight: '700' },
+
+  summaryGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 4 },
+  summaryCard: { width: '48%', backgroundColor: '#fff', borderRadius: 12, padding: 12, marginBottom: 12, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#e2e8f0' },
+  summaryCardIcon: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  summaryCardContent: { flex: 1 },
+  summaryCardTitle: { fontSize: 11, color: '#64748b', fontWeight: '600', marginBottom: 2 },
+  summaryCardValue: { fontSize: 13, color: '#0f172a', fontWeight: '700' },
+
+  cardTitle: { fontSize: 14, fontWeight: '700', color: '#1e293b', marginBottom: 12 },
+
+  progressBarContainer: { height: 12, flexDirection: 'row', borderRadius: 6, overflow: 'hidden', marginBottom: 16, backgroundColor: '#f1f5f9' },
+  progressSegment: { height: '100%' },
+
+  legendContainer: { flexDirection: 'row', justifyContent: 'space-between' },
+  legendItem: { flexDirection: 'row', alignItems: 'flex-start', flex: 1 },
+  legendColor: { width: 10, height: 10, borderRadius: 3, marginRight: 6, marginTop: 3 },
+  legendLabel: { fontSize: 11, color: '#64748b', fontWeight: '600', marginBottom: 2 },
+  legendValue: { fontSize: 11, color: '#1e293b', fontWeight: '700' },
+
+  startEndRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  startEndCol: { flex: 1, paddingRight: 8 },
+  startEndHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  startEndLabel: { fontSize: 11, color: '#64748b', fontWeight: '600', marginLeft: 4 },
+  startEndTime: { fontSize: 13, color: '#0f172a', fontWeight: '700', marginBottom: 4 },
+  startEndAddress: { fontSize: 11, color: '#475569', lineHeight: 16 },
+
+  addInfoGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  addInfoItem: { width: '48%', flexDirection: 'row', alignItems: 'flex-start', marginBottom: 16 },
+  addInfoLabel: { fontSize: 11, color: '#64748b', fontWeight: '600', marginBottom: 2 },
+  addInfoValue: { fontSize: 12, color: '#1e293b', fontWeight: '700' },
 
   profileHeaderCard: {
     flexDirection: 'row', alignItems: 'center',

@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -212,12 +213,14 @@ const AlarmDashboardScreen = ({ navigation }) => {
     }
   }, [loadDevices, geocodeAlarm]);
 
-  useEffect(() => {
-    loadData();
-    // Auto refresh removed to reduce server load
-    // const interval = setInterval(() => loadData(false), 120000); // 2 mins
-    // return () => clearInterval(interval);
-  }, [loadData]);
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+      // Auto refresh removed to reduce server load
+      // const interval = setInterval(() => loadData(false), 120000); // 2 mins
+      // return () => clearInterval(interval);
+    }, [loadData])
+  );
 
   // ── Derived stats ──
   const totalAlarms = alarms.length;

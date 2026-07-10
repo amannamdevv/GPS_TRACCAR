@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {
   View,
@@ -12,6 +12,8 @@ import {
   Alert,
   Modal,
   Platform,
+  Clipboard,
+  ToastAndroid,
 } from 'react-native';
 import RNFS from 'react-native-fs';
 import Share from 'react-native-share';
@@ -26,7 +28,7 @@ const formatTime = (raw) => {
   if (!raw || raw === 'N/A') return 'N/A';
   const m = moment(raw);
   if (!m.isValid()) return raw;
-  return m.format('DD/MM/YYYY, h:mm A');
+  return m.format('DD/MM/YYYY, HH:mm:ss');
 };
 
 // ─── HELPER: Format total_duration_minutes → HH:MM:SS ─────────────────────────
@@ -64,6 +66,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
   const routeDeviceName = route?.params?.deviceName;
 
   const [logs, setLogs] = useState([]);
+  const [allLogs, setAllLogs] = useState([]); // full filtered set for in-memory pagination
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -101,6 +104,9 @@ const DgStatusLogScreen = ({ route, navigation }) => {
   };
   const [startDate, setStartDate] = useState(todayStart);
   const [endDate, setEndDate] = useState(() => { const d = new Date(); d.setHours(23, 59, 59, 999); return d; });
+
+  const [imeiFilter, setImeiFilter] = useState('');
+  const [tempImeiFilter, setTempImeiFilter] = useState('');
 
   const [tempStartDate, setTempStartDate] = useState(todayStart);
   const [tempEndDate, setTempEndDate] = useState(() => { const d = new Date(); d.setHours(23, 59, 59, 999); return d; });
@@ -200,40 +206,106 @@ const DgStatusLogScreen = ({ route, navigation }) => {
     }
   }, []);
 
-  const loadLogs = useCallback(async (isRefresh = false, overrideParams = null) => {
+  const abortControllerRef = useRef(null);
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) abortControllerRef.current.abort();
+    };
+  }, []);
+
+  const loadLogs = useCallback(async (isRefresh = false, overrideParams = null, statusOverride = undefined) => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    const activeStatus = statusOverride !== undefined ? statusOverride : statusFilter;
+    const currentPage = overrideParams?.page ?? 1;
+
     if (isRefresh) {
       setRefreshing(true);
-    } else if (page === 1) {
-      setLoading(true);
     } else {
-      setLoadingMore(true);
+      setLoading(true);
     }
 
     try {
-      const params = overrideParams ? { ...overrideParams } : {};
-      params.limit = 99999;
-      params.offset = 0;
+      const startMom = overrideParams?.start_date ? moment(overrideParams.start_date).startOf('day') : moment(startDate).startOf('day');
+      const endMom = overrideParams?.end_date ? moment(overrideParams.end_date).endOf('day') : moment(endDate).endOf('day');
 
-      if (!overrideParams) {
-        if (deviceId.trim()) params.deviceid = deviceId.trim();
-        if (deviceName.trim()) params.dg_name = deviceName.trim();
-        params.start_date = moment(startDate).format('YYYY-MM-DD');
-        params.end_date = moment(endDate).format('YYYY-MM-DD');
+      const devIdParam = overrideParams?.deviceid !== undefined ? overrideParams.deviceid : (overrideParams?.device_id !== undefined ? overrideParams.device_id : deviceId.trim());
+      const devNameParam = overrideParams?.dg_name !== undefined ? overrideParams.dg_name : deviceName.trim();
+
+      const params = {
+        start_date: startMom.format('YYYY-MM-DD'),
+        end_date: endMom.format('YYYY-MM-DD'),
+        page: 1,
+        limit: 9999, // Fetch all records for INSTANT client-side pagination
+      };
+
+      if (devIdParam) params.deviceid = devIdParam;
+      if (devNameParam) params.dg_name = devNameParam;
+
+      if (activeStatus && activeStatus !== 'ALL') {
+        let apiStatus = activeStatus;
+        if (activeStatus === 'MOVING') apiStatus = 'MOVE';
+        params.dg_status = apiStatus;
       }
 
-      const data = await fetchDgStatusLogs(params);
-      const rawLogList = Array.isArray(data) ? data : [];
-      setFullLogs(rawLogList);
+      const response = await fetchDgStatusLogs(params, signal);
+      if (signal.aborted) return;
 
+      let rawLogList = Array.isArray(response?.data) ? response.data : (Array.isArray(response) ? response : []);
+
+      const appliedImei = overrideParams?.imei !== undefined ? overrideParams.imei : imeiFilter;
+      if (appliedImei && appliedImei.trim() !== '') {
+        const query = appliedImei.trim().toLowerCase();
+        rawLogList = rawLogList.filter(item => String(item.uniqueid || '').toLowerCase().includes(query));
+      }
+
+      const total = rawLogList.length;
+
+      setAllLogs(rawLogList); // Save full list for instant page changes
+      setTotalCount(total);
+
+      const maxPages = Math.max(1, Math.ceil(total / pageSize));
+      const validPage = Math.min(currentPage, maxPages);
+
+      if (currentPage !== validPage && overrideParams?.page === undefined) {
+        setPage(validPage);
+      } else if (overrideParams?.page === undefined) {
+        setPage(currentPage);
+      }
+
+      setHasMore(validPage < maxPages);
+
+      const startIdx = (validPage - 1) * pageSize;
+      const sliced = rawLogList.slice(startIdx, startIdx + pageSize);
+      setLogs(sliced);
+
+      if (sliced.length > 0) {
+        lazyGeocodeAddresses(sliced);
+      }
     } catch (e) {
-      console.error('Failed to fetch DG logs:', e);
-      Alert.alert('Error', 'Failed to fetch DG log data. Please try again.');
+      if (!signal.aborted) {
+        console.warn('Failed to fetch DG logs:', e);
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
-      setLoadingMore(false);
+      if (!signal.aborted) {
+        setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
+      }
     }
-  }, [deviceId, deviceName, startDate, endDate, devices]);
+  }, [deviceId, deviceName, startDate, endDate, pageSize, statusFilter, lazyGeocodeAddresses, imeiFilter]);
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleRouteParams = (deviceList) => {
@@ -280,18 +352,18 @@ const DgStatusLogScreen = ({ route, navigation }) => {
   }, [routeDeviceId, routeDeviceName]);
 
   const handleApply = () => {
-    setStatusFilter(tempStatusFilter);
-    // Ensure end date covers the whole day of start if only start is set or end before start
+    const newStatus = tempStatusFilter;
+    setStatusFilter(newStatus);
     let start = tempStartDate;
     let end = tempEndDate;
     if (!end || moment(end).isBefore(start, 'day')) {
       end = moment(start).endOf('day').toDate();
     } else {
-      // Ensure end is at end of its day
       end = moment(end).endOf('day').toDate();
     }
     setStartDate(start);
     setEndDate(end);
+    setImeiFilter(tempImeiFilter);
     setPage(1);
     setShowFilters(false);
 
@@ -300,9 +372,12 @@ const DgStatusLogScreen = ({ route, navigation }) => {
     if (deviceName.trim()) params.dg_name = deviceName.trim();
     params.start_date = moment(start).format('YYYY-MM-DD');
     params.end_date = moment(end).format('YYYY-MM-DD');
+    params.imei = tempImeiFilter;
+    params.page = 1;
 
     setLoading(true);
-    loadLogs(false, params);
+    // Pass newStatus explicitly so the correct filter is used immediately
+    loadLogs(false, params, newStatus);
   };
 
   const handleReset = () => {
@@ -311,6 +386,8 @@ const DgStatusLogScreen = ({ route, navigation }) => {
     setShowStatusPicker(false);
     setShowDevPicker(false);
     setSearchQuery('');
+    setImeiFilter('');
+    setTempImeiFilter('');
 
     const defaultStart = todayStart();
     const defaultEnd = new Date();
@@ -337,12 +414,15 @@ const DgStatusLogScreen = ({ route, navigation }) => {
 
     setLoading(true);
     const params = {};
-    if (resolvedDeviceId) params.device_id = resolvedDeviceId;
-    if (resolvedDeviceName) params.dg_name = resolvedDeviceName;
+    params.device_id = resolvedDeviceId || '';
+    params.dg_name = resolvedDeviceName || '';
+    params.imei = '';
     params.start_date = moment(defaultStart).format('YYYY-MM-DD');
     params.end_date = moment(defaultEnd).format('YYYY-MM-DD');
+    params.page = 1;
 
-    loadLogs(false, params);
+    // Pass 'ALL' explicitly so filter is cleared immediately
+    loadLogs(false, params, 'ALL');
   };
 
   const handleLoadMore = () => {
@@ -351,48 +431,29 @@ const DgStatusLogScreen = ({ route, navigation }) => {
     }
   };
 
+  // Trigger log update when page changes (pure in-memory pagination)
+  const isFirstRender = useRef(true);
   useEffect(() => {
-    const fromMs = moment(startDate).startOf('day').valueOf();
-    const toMs = moment(endDate).endOf('day').valueOf();
-
-    const filtered = fullLogs.filter(item => {
-      // NOTE: API (fetchDgStatusLogs) already scopes records to the logged-in user's devices.
-      // No need to re-filter by the devices list here — doing so blocked all data when the
-      // device list hadn't loaded yet.
-
-      const t = moment(item.start_time || item.position_time).valueOf();
-      if (t < fromMs || t > toMs) return false;
-
-      const activeDeviceName = routeDeviceName || deviceName;
-      if (activeDeviceName && activeDeviceName.trim()) {
-        const itemName = String(item.dg_name || item.device_name || '').trim().toUpperCase();
-        const filterName = activeDeviceName.trim().toUpperCase();
-        if (itemName !== filterName) return false;
-      }
-
-      if (statusFilter === 'ALL') return true;
-      const st = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
-      if (statusFilter === 'MOVING') return st.includes('MOVING') || st.includes('MOVE') || st.includes('MOTION') || st.includes('TRANSIT');
-      if (statusFilter === 'STOP') return st.includes('STOP') || st.includes('IDLE') || st.includes('PARK');
-      if (statusFilter === 'ON') return (st.includes('ON') || st === '1') && !st.includes('MOTION') && !st.includes('MOVING') && !st.includes('STOP');
-      if (statusFilter === 'OFF') return st.includes('OFF') || st === '0';
-      return true;
-    });
-
-    setTotalCount(filtered.length);
-
-    const offset = (page - 1) * pageSize;
-    const pagedLogs = filtered.slice(offset, offset + pageSize);
-
-    setHasMore(filtered.length > offset + pageSize);
-    setLogs(pagedLogs);
-
-    if (pagedLogs.length > 0) {
-      lazyGeocodeAddresses(pagedLogs);
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
     }
-  }, [fullLogs, statusFilter, deviceName, routeDeviceName, page, lazyGeocodeAddresses, startDate, endDate, devices, pageSize]);
+    // Pure in-memory pagination slicing
+    if (allLogs.length > 0) {
+      const startIdx = (page - 1) * pageSize;
+      const sliced = allLogs.slice(startIdx, startIdx + pageSize);
+      setLogs(sliced);
+      lazyGeocodeAddresses(sliced);
+    }
+  }, [page, pageSize]);
 
   const toggleExpand = (id) => setExpandedCardIds(prev => ({ ...prev, [id]: !prev[id] }));
+
+  const handleCopyUid = (uid) => {
+    if (!uid) return;
+    Clipboard.setString(uid);
+    ToastAndroid.show('IMEI copied!', ToastAndroid.SHORT);
+  };
 
   // ─── Render card ──────────────────────────────────────────────────────────
   const renderLogCard = ({ item }) => {
@@ -418,19 +479,31 @@ const DgStatusLogScreen = ({ route, navigation }) => {
             <Icon name={iconName} size={13} color="#FFF" />
             <Text style={styles.pillText}>{statusLabel}</Text>
           </View>
-          <Text style={styles.deviceNameText} numberOfLines={1}>
-            {item.dg_name || item.device_name || `ID: ${item.deviceid}`}
-          </Text>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={[styles.deviceNameText, { flex: 1, marginRight: 8 }]} numberOfLines={1}>
+              {item.dg_name || item.device_name || `ID: ${item.deviceid}`}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={{ fontSize: 11, color: '#64748b', fontWeight: '600' }}>
+                IMEI: {item.uniqueid || ''}
+              </Text>
+              {item.uniqueid ? (
+                <TouchableOpacity onPress={() => handleCopyUid(item.uniqueid)} style={{ padding: 4, marginLeft: 2 }}>
+                  <Icon name="content-copy" size={14} color="#0284c7" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
         </View>
 
         <View style={styles.telemetryRow}>
           <View style={styles.telemetryItem}>
             <Icon name="clock-outline" size={15} color="#64748b" />
-            <Text style={styles.telemetryText}>{formatDuration(item.total_duration_minutes)}</Text>
+            <Text style={styles.telemetryText}>{item.total_duration_hms || '00:00:00'}</Text>
           </View>
           <View style={styles.telemetryItem}>
             <Icon name="road-variant" size={15} color="#64748b" />
-            <Text style={styles.telemetryText}>{item.covered_distance_km ?? 0} KM</Text>
+            <Text style={styles.telemetryText}>{(rawStatus.includes('OFF') || rawStatus === '0') ? 0 : (item.covered_distance_km ?? 0)} KM</Text>
           </View>
           <View style={[styles.telemetryItem, { flex: 1.5 }]}>
             <Icon name="transmission-tower" size={15} color="#64748b" />
@@ -475,15 +548,12 @@ const DgStatusLogScreen = ({ route, navigation }) => {
               { label: '🌐 Circle', value: item.circle || 'N/A' },
               { label: '📍 Area / District', value: `${item.area || 'N/A'} / ${item.district || 'N/A'}` },
               { label: '🏫 Site Name / Type', value: `${item.site_name || 'N/A'} (${item.site_type || 'N/A'})` },
-              // { label: '🔵 Current Indus ID', value: item.current_indus_id || 'N/A' },
-              // { label: '📏 Nearest Distance', value: item.nearest_distance_m != null ? `${item.nearest_distance_m} m` : 'N/A' },
               { label: '🗼 Indus ID (100m)', value: item.indus_id_within_100m || 'None' },
               { label: '📞 IME', value: item.ome_name_as_erp || 'N/A' },
               { label: '👤 AOM', value: `${item.aom_name || 'N/A'}${item.aom_number ? ` (${item.aom_number})` : ''}` },
               { label: '🏢 Client Name', value: item.client_name || 'N/A' },
-
-              // { label: '⏱ Total Duration', value: item.total_duration_minutes != null ? `${item.total_duration_minutes} mins` : 'N/A' },
-              // { label: '🔗 Merged Rows', value: item.merged_rows != null ? String(item.merged_rows) : 'N/A' },
+              { label: '⚡ Ext V Start', value: item.start_adc1 != null ? `${parseFloat(item.start_adc1).toFixed(2)} V` : 'N/A' },
+              { label: '⚡ Ext V End', value: item.end_adc1 != null ? `${parseFloat(item.end_adc1).toFixed(2)} V` : 'N/A' },
               { label: '📡 GPS Install Date', value: item.gps_install_date ? moment(item.gps_install_date).format('DD/MM/YYYY') : 'N/A' },
             ].map((row, idx) => (
               <View key={idx} style={styles.detailRow}>
@@ -522,7 +592,8 @@ const DgStatusLogScreen = ({ route, navigation }) => {
             mode="date"
             display={Platform.OS === 'ios' ? 'spinner' : 'calendar'}
             onChange={onPickerChange}
-            maximumDate={new Date()}
+            minimumDate={pickerMode === 'start' ? moment(tempEndDate).subtract(30, 'days').toDate() : moment(tempStartDate).toDate()}
+            maximumDate={pickerMode === 'start' ? moment.min(moment(), moment(tempEndDate)).toDate() : moment.min(moment(), moment(tempStartDate).add(30, 'days')).toDate()}
             style={styles.datePickerInModal}
           />
 
@@ -677,6 +748,25 @@ const DgStatusLogScreen = ({ route, navigation }) => {
         </View>
       </View>
 
+      <View style={styles.filterSection}>
+        <Text style={styles.filterLabel}>IMEI</Text>
+        <View style={styles.searchRow}>
+          <Icon name="barcode-scan" size={16} color="#94a3b8" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search by IMEI..."
+            placeholderTextColor="#94a3b8"
+            value={tempImeiFilter}
+            onChangeText={setTempImeiFilter}
+          />
+          {tempImeiFilter.length > 0 && (
+            <TouchableOpacity onPress={() => setTempImeiFilter('')}>
+              <Icon name="close" size={16} color="#94a3b8" />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
       <View style={styles.filterActions}>
         <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
           <Icon name="refresh" size={16} color="#64748b" />
@@ -706,97 +796,106 @@ const DgStatusLogScreen = ({ route, navigation }) => {
 
       {renderDatePickerModal()}
       {showFilters && renderFilterPanel()}
-
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color="#0284c7" />
-          <Text style={styles.loadingText}>Fetching DG Logs...</Text>
-        </View>
-      ) : logs.length === 0 ? (
-        <View style={styles.center}>
-          <Icon name="filter-remove-outline" size={64} color="#cbd5e1" />
-          <Text style={styles.emptyTitle}>No Matching Logs</Text>
-          <Text style={styles.emptySubtitle}>No records matched the status filter.</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => { setStatusFilter('ALL'); setTempStatusFilter('ALL'); }}>
-            <Text style={styles.retryText}>Clear Status Filter</Text>
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={{ flex: 1 }}>
-          <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={styles.countText}>Showing {logs.length} logs for {moment(startDate).isSame(endDate, 'day') ? moment(startDate).format('DD/MM/YYYY') : `${moment(startDate).format('DD/MM/YYYY')} - ${moment(endDate).format('DD/MM/YYYY')}`}</Text>
-            <Text style={{ fontSize: 13, fontWeight: '700', color: '#0284c7' }}>Total: {totalCount}</Text>
+      <View style={{ flex: 1 }}>
+        {logs.length === 0 && !loading && !refreshing ? (
+          <View style={styles.center}>
+            <Icon name="filter-remove-outline" size={64} color="#cbd5e1" />
+            <Text style={styles.emptyTitle}>No Matching Logs</Text>
+            <Text style={styles.emptySubtitle}>No records matched the status filter.</Text>
+            <TouchableOpacity style={styles.retryBtn} onPress={() => { setStatusFilter('ALL'); setTempStatusFilter('ALL'); setPage(1); loadLogs(false); }}>
+              <Text style={styles.retryText}>Clear Status Filter</Text>
+            </TouchableOpacity>
           </View>
-          <FlatList
-            data={logs}
-            keyExtractor={item => String(item.id)}
-            renderItem={renderLogCard}
-            contentContainerStyle={styles.listContent}
-            refreshing={refreshing}
-            onRefresh={() => { setPage(1); loadLogs(true); }}
-          />
-          <View style={styles.paginationContainer}>
-            <TouchableOpacity
-              style={[styles.pageBtn, page === 1 && styles.pageBtnDisabled]}
-              disabled={page === 1 || loadingMore}
-              onPress={() => setPage(1)}
-            >
-              <Text style={[styles.pageBtnText, page === 1 && styles.pageBtnTextDisabled]}>First</Text>
-            </TouchableOpacity>
+        ) : (
+          <View style={{ flex: 1 }}>
+            <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={styles.countText}>
+                Showing {logs.length} logs for {moment(startDate).isSame(endDate, 'day') ? moment(startDate).format('DD/MM/YYYY') : `${moment(startDate).format('DD/MM/YYYY')} - ${moment(endDate).format('DD/MM/YYYY')}`}
+              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {loading && <ActivityIndicator size="small" color="#0284c7" style={{ marginRight: 8 }} />}
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#0284c7' }}>Total: {totalCount}</Text>
+              </View>
+            </View>
+            <FlatList
+              data={logs}
+              keyExtractor={item => String(item.id)}
+              renderItem={renderLogCard}
+              contentContainerStyle={styles.listContent}
+              refreshing={refreshing}
+              onRefresh={() => { setPage(1); loadLogs(true); }}
+            />
+            <View style={styles.paginationContainer}>
+              <TouchableOpacity
+                style={[styles.pageBtn, (page === 1 || loading || loadingMore || refreshing) && styles.pageBtnDisabled]}
+                disabled={page === 1 || loading || loadingMore || refreshing}
+                onPress={() => setPage(1)}
+              >
+                <Text style={[styles.pageBtnText, page === 1 && styles.pageBtnTextDisabled]}>First</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.pageBtn, page === 1 && styles.pageBtnDisabled]}
-              disabled={page === 1 || loadingMore}
-              onPress={() => setPage(prev => Math.max(1, prev - 1))}
-            >
-              <Icon name="chevron-left" size={20} color={page === 1 ? "#cbd5e1" : "#0284c7"} />
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.pageBtn, (page === 1 || loading || loadingMore || refreshing) && styles.pageBtnDisabled]}
+                disabled={page === 1 || loading || loadingMore || refreshing}
+                onPress={() => setPage(prev => Math.max(1, prev - 1))}
+              >
+                <Icon name="chevron-left" size={20} color={page === 1 ? "#cbd5e1" : "#0284c7"} />
+              </TouchableOpacity>
 
-            {(() => {
-              const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
-              const pageButtons = [];
-              const maxButtons = 3;
-              let startPage = Math.max(1, page - Math.floor(maxButtons / 2));
-              let endPage = Math.min(totalPages, startPage + maxButtons - 1);
-              if (endPage - startPage < maxButtons - 1) {
-                startPage = Math.max(1, endPage - maxButtons + 1);
-              }
-              for (let i = startPage; i <= endPage; i++) {
-                pageButtons.push(
-                  <TouchableOpacity
-                    key={i}
-                    style={[styles.pageBtn, i === page && styles.pageBtnActive]}
-                    disabled={i === page || loadingMore}
-                    onPress={() => setPage(i)}
-                  >
-                    <Text style={[styles.pageBtnText, i === page && styles.pageBtnTextActive]}>{i}</Text>
-                  </TouchableOpacity>
-                );
-              }
-              return pageButtons;
-            })()}
-
-            <TouchableOpacity
-              style={[styles.pageBtn, !hasMore && styles.pageBtnDisabled]}
-              disabled={!hasMore || loadingMore}
-              onPress={() => setPage(prev => prev + 1)}
-            >
-              <Icon name="chevron-right" size={20} color={!hasMore ? "#cbd5e1" : "#0284c7"} />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.pageBtn, !hasMore && styles.pageBtnDisabled]}
-              disabled={!hasMore || loadingMore}
-              onPress={() => {
+              {(() => {
                 const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
-                setPage(totalPages);
-              }}
-            >
-              <Text style={[styles.pageBtnText, !hasMore && styles.pageBtnTextDisabled]}>Last</Text>
-            </TouchableOpacity>
+                const pageButtons = [];
+                const maxButtons = 3;
+                let startPage = Math.max(1, page - Math.floor(maxButtons / 2));
+                let endPage = Math.min(totalPages, startPage + maxButtons - 1);
+                if (endPage - startPage < maxButtons - 1) {
+                  startPage = Math.max(1, endPage - maxButtons + 1);
+                }
+                for (let p = startPage; p <= endPage; p++) {
+                  const isActive = p === page;
+                  pageButtons.push(
+                    <TouchableOpacity
+                      key={p}
+                      style={[styles.pageBtn, isActive && styles.pageBtnActive]}
+                      disabled={loading || loadingMore || refreshing}
+                      onPress={() => setPage(p)}
+                    >
+                      <Text style={[styles.pageBtnText, isActive && styles.pageBtnTextActive]}>{p}</Text>
+                    </TouchableOpacity>
+                  );
+                }
+                return pageButtons;
+              })()}
+              <TouchableOpacity
+                style={[styles.pageBtn, (!hasMore || loading || loadingMore || refreshing) && styles.pageBtnDisabled]}
+                disabled={!hasMore || loading || loadingMore || refreshing}
+                onPress={() => setPage(prev => prev + 1)}
+              >
+                <Icon name="chevron-right" size={20} color={!hasMore ? "#cbd5e1" : "#0284c7"} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.pageBtn, (!hasMore || loading || loadingMore || refreshing) && styles.pageBtnDisabled]}
+                disabled={!hasMore || loading || loadingMore || refreshing}
+                onPress={() => {
+                  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+                  setPage(totalPages);
+                }}
+              >
+                <Text style={[styles.pageBtnText, !hasMore && styles.pageBtnTextDisabled]}>Last</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      )}
+        )}
+        
+        {showFilters && (
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.15)', zIndex: 10 }]}
+            onPress={() => setShowFilters(false)}
+          />
+        )}
+      </View>
     </View>
   );
 };

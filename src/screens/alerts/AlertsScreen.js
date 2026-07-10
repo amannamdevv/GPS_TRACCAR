@@ -2,10 +2,11 @@
 // Fixed: race condition, retry logic, stable keys, stale closure in delete
 
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View, Text, StyleSheet, FlatList, ActivityIndicator,
   RefreshControl, TouchableOpacity, StatusBar, Modal, TextInput,
-  ScrollView, Alert,
+  ScrollView, Alert, AppState,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -434,7 +435,20 @@ const AlertsScreen = ({ navigation }) => {
     }
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [loadData])
+  );
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        loadData(true);
+      }
+    });
+    return () => subscription.remove();
+  }, [loadData]);
 
   // ── Render item ───────────────────────────────────────────────────────────
   const renderItem = ({ item }) => {
@@ -443,8 +457,8 @@ const AlertsScreen = ({ navigation }) => {
     const displayName = typeParts.map(t => ALERT_MAPPING[t] || t).join(', ') || 'Unknown Alert';
     const config = getAlertConfig(cleanType);
     const ts = item.eventtime || item.serverTime;
-    const timeStr = ts ? moment(ts).format('hh:mm A') : '--';
-    const dateStr = ts ? moment(ts).format('MMM DD, YYYY') : '--';
+    const timeStr = ts ? moment(ts).format('HH:mm') : '--';
+    const dateStr = ts ? moment(ts).format('DD/MM/YYYY') : '--';
     const id = item.deviceid || item.deviceId;
     const deviceName = deviceNames[id] || item.device_name || `Vehicle #${id}`;
     const key = getStableKey(item);

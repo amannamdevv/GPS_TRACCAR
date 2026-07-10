@@ -11,14 +11,16 @@ import {
   RefreshControl,
   PanResponder,
   Platform,
+  AppState,
 } from 'react-native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Path, G, Text as SvgText, Circle, Defs, ClipPath, Rect, Polyline, Line } from 'react-native-svg';
 import Header from '../../components/Header';
 import DeviceCard from '../../components/DeviceCard';
-import { fetchDeviceList, fetchDgDashboard, fetchFilterDropdowns } from '../../api/webApi';
+import { fetchDeviceList, fetchDgDashboard, fetchDgDashboardTop10, fetchFilterDropdowns } from '../../api/webApi';
 import { Modal, ScrollView } from 'react-native';
 import { AuthContext } from '../../context/AuthContext';
+import moment from 'moment';
 
 const { width } = Dimensions.get('window');
 
@@ -34,6 +36,213 @@ const arcPath = (cx, cy, r, startDeg, endDeg) => {
   const start = polarToCartesian(cx, cy, r, startDeg);
   const large = sweep > 180 ? 1 : 0;
   return `M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`;
+};
+
+// ─── TOP 10 BAR CHART ─────────────────────────────────────────────────────────
+const parseDurationString = (durStr) => {
+  if (!durStr) return 0;
+  let str = String(durStr).split('.')[0];
+  const parts = str.split(':');
+  if (parts.length === 3) {
+    const h = parseInt(parts[0], 10) || 0;
+    const m = parseInt(parts[1], 10) || 0;
+    const s = parseInt(parts[2], 10) || 0;
+    return h + (m / 60) + (s / 3600);
+  }
+  return parseFloat(str) || 0;
+};
+
+const formatDurationHumanReadable = (valHours) => {
+  if (isNaN(valHours) || valHours === 0) return '00:00:00';
+  const totalSeconds = Math.round(valHours * 3600);
+  const days = Math.floor(totalSeconds / 86400);
+  const remainingSecondsAfterDays = totalSeconds % 86400;
+  const hours = Math.floor(remainingSecondsAfterDays / 3600);
+  const mins = Math.floor((remainingSecondsAfterDays % 3600) / 60);
+  const secs = remainingSecondsAfterDays % 60;
+  if (days > 0) {
+    return `${days} day${days > 1 ? 's' : ''} ${hours}h ${mins}m ${secs}s`;
+  } else {
+    const pad = n => String(n).padStart(2, '0');
+    return `${pad(Math.floor(valHours))}:${pad(mins)}:${pad(secs)}`;
+  }
+};
+
+const Top10BarChart = ({ data }) => {
+  const [barChartMode, setBarChartMode] = React.useState('distance');
+  const [tooltipPos, setTooltipPos] = React.useState({ index: null, x: 0 });
+
+  const activeData = React.useMemo(() => {
+    if (!data) return [];
+    if (barChartMode === 'distance') {
+      const list = [...(data.top_moving || [])];
+      return list.sort((a, b) => parseFloat(b.total_dg_move_km || 0) - parseFloat(a.total_dg_move_km || 0)).slice(0, 10);
+    }
+    if (barChartMode === 'onTime') {
+      const list = [...(data.top_running || [])];
+      return list.sort((a, b) => parseDurationString(b.total_dg_on) - parseDurationString(a.total_dg_on)).slice(0, 10);
+    }
+    const list = [...(data.top_idle || [])];
+    return list.sort((a, b) => parseDurationString(b.total_dg_idle) - parseDurationString(a.total_dg_idle)).slice(0, 10);
+  }, [data, barChartMode]);
+
+  const { labels, values, displayStrings, fullNames } = React.useMemo(() => {
+    let _labels = [];
+    let _values = [];
+    let _strings = [];
+    let _fullNames = [];
+    
+    activeData.forEach(item => {
+      let valNum = 0;
+      let str = '';
+      
+      let name = item.dg_name || item.device_name || 'Unknown';
+      _fullNames.push(name);
+      _labels.push(name.length > 5 ? name.substring(0, 5) + '..' : name);
+
+      if (barChartMode === 'distance') {
+        valNum = parseFloat(item.total_dg_move_km || item.total_distance_km || 0);
+        str = valNum.toFixed(2) + ' km';
+      } else if (barChartMode === 'onTime') {
+        valNum = parseDurationString(item.total_dg_on);
+        str = formatDurationHumanReadable(valNum);
+      } else {
+        valNum = parseDurationString(item.total_dg_idle);
+        str = formatDurationHumanReadable(valNum);
+      }
+      
+      _values.push(valNum);
+      _strings.push(str);
+    });
+
+    return { labels: _labels, values: _values, displayStrings: _strings, fullNames: _fullNames };
+  }, [activeData, barChartMode]);
+
+  const maxValue = Math.max(...values, 0);
+  const niceMax = maxValue === 0 ? 10 : Math.ceil(maxValue * 1.2);
+  const dynamicSegments = 4;
+  
+  const handleModeChange = (mode) => {
+    setBarChartMode(mode);
+    setTooltipPos({ index: null, x: 0 });
+  };
+
+  const scrollableWidth = Math.max(width - 80, values.length * 60);
+
+  return (
+    <View style={[{ overflow: 'hidden', marginTop: 10, paddingBottom: 16, paddingTop: 10, paddingHorizontal: 12, backgroundColor: '#fff', borderRadius: 16 }]}>
+      <View style={[{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 }]}>
+        <Text style={{ fontSize: 13, fontWeight: '700', color: '#334155' }}>
+          {barChartMode === 'distance' ? 'Top Moving DGs' : barChartMode === 'onTime' ? 'Top Running DGs' : 'Top Idle DGs'}
+        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+          <TouchableOpacity onPress={() => handleModeChange('distance')} style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: barChartMode === 'distance' ? '#3b82f6' : '#e2e8f0', borderRadius: 12, marginRight: 8 }}>
+            <Text style={{ fontSize: 11, color: barChartMode === 'distance' ? '#fff' : '#64748b', fontWeight: 'bold' }}>Move</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => handleModeChange('onTime')} style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: barChartMode === 'onTime' ? '#10b981' : '#e2e8f0', borderRadius: 12, marginRight: 8 }}>
+            <Text style={{ fontSize: 11, color: barChartMode === 'onTime' ? '#fff' : '#64748b', fontWeight: 'bold' }}>ON</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => handleModeChange('idleTime')} style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: barChartMode === 'idleTime' ? '#f59e0b' : '#e2e8f0', borderRadius: 12 }}>
+            <Text style={{ fontSize: 11, color: barChartMode === 'idleTime' ? '#fff' : '#64748b', fontWeight: 'bold' }}>Idle</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {values.length === 0 && (
+         <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+             <Text style={{ color: '#94a3b8' }}>No data available for the last 7 days</Text>
+         </View>
+      )}
+
+      {values.length > 0 && (
+      <View style={{ marginTop: 14, flexDirection: 'row' }}>
+        <View style={{ width: 45, height: 210, backgroundColor: '#fff', zIndex: 10 }}>
+          <Svg width={45} height={210}>
+            {Array.from({ length: dynamicSegments + 1 }).map((_, i) => {
+              const val = niceMax - i * (niceMax / dynamicSegments);
+              const y = 20 + i * (160 / dynamicSegments);
+              return (
+                <SvgText key={`y-`+i} x={35} y={y + 4} fontSize="11" fill="#64748b" textAnchor="end" fontWeight="bold">
+                  {val >= 1000 ? `${(val / 1000).toFixed(0)}k` : Math.round(val)}
+                </SvgText>
+              );
+            })}
+          </Svg>
+        </View>
+
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+          <View style={{ position: 'relative', width: scrollableWidth, height: 210 }}>
+            <Svg width={scrollableWidth} height={210}>
+              {Array.from({ length: dynamicSegments + 1 }).map((_, i) => {
+                const y = 20 + i * (160 / dynamicSegments);
+                return (
+                  <Line key={`grid-`+i} x1={0} y1={y} x2={scrollableWidth - 15} y2={y} stroke="#eef2f7" strokeWidth="1" strokeDasharray="4, 6" />
+                );
+              })}
+              <Line x1={0} y1={20} x2={0} y2={180} stroke="#cbd5e1" strokeWidth="1" />
+              <Line x1={scrollableWidth - 15} y1={20} x2={scrollableWidth - 15} y2={180} stroke="#cbd5e1" strokeWidth="1" />
+
+              {values.map((numVal, i) => {
+                const barH = niceMax > 0 ? (numVal / niceMax) * 160 : 0;
+                const usableWidth = scrollableWidth - 15;
+                const barSpacing = values.length > 0 ? usableWidth / values.length : usableWidth;
+                const maxBarWidth = 40;
+                const barWidth = Math.min(barSpacing * 0.55, maxBarWidth);
+                const x = (i * barSpacing) + (barSpacing - barWidth) / 2;
+                const y = 180 - barH;
+                const barColor = barChartMode === 'distance' ? '#3b82f6' : barChartMode === 'onTime' ? '#10b981' : '#f59e0b';
+                
+                const isAnySelected = tooltipPos.index !== null;
+                const isSelected = tooltipPos.index === i;
+                const barOpacity = isAnySelected ? (isSelected ? 1 : 0.3) : 1;
+
+                return (
+                  <G 
+                    key={`bar-`+i}
+                    onPress={() => {
+                      if (tooltipPos.index === i) {
+                        setTooltipPos({ index: null, x: 0 });
+                      } else {
+                        let tipX = x + barWidth / 2 - 35; 
+                        if (tipX < 0) tipX = 0;
+                        if (tipX > scrollableWidth - 75) tipX = scrollableWidth - 75;
+                        setTooltipPos({ index: i, x: tipX });
+                      }
+                    }}
+                  >
+                    <Rect x={x} y={y} width={barWidth} height={barH} fill={barColor} opacity={barOpacity} rx="4" />
+                    <SvgText x={(i * barSpacing) + barSpacing / 2} y={198} fontSize="11" fill="#64748b" textAnchor="middle" fontWeight="bold">
+                      {labels[i]}
+                    </SvgText>
+                    {/* Invisible hit area for easier tapping */}
+                    <Rect x={i * barSpacing} y={0} width={barSpacing} height={210} fill="transparent" />
+                  </G>
+                );
+              })}
+            </Svg>
+
+            {tooltipPos.index !== null ? (
+              <View style={{
+                position: 'absolute', top: 10, left: tooltipPos.x,
+                backgroundColor: '#1e293b', paddingHorizontal: 6, paddingVertical: 6,
+                borderRadius: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5,
+                minWidth: 70, alignItems: 'center', zIndex: 100
+              }}>
+                <Text style={{ color: '#94a3b8', fontSize: 9, textAlign: 'center', marginBottom: 2 }}>
+                  {fullNames[tooltipPos.index]}
+                </Text>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold', textAlign: 'center' }}>
+                  {displayStrings[tooltipPos.index]}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </ScrollView>
+      </View>
+      )}
+    </View>
+  );
 };
 
 // ─── COMPACT DUAL CHARTS ────────────────────────────────────────────────────────
@@ -173,6 +382,7 @@ const DashboardScreen = ({ navigation }) => {
   const [devices, setDevices] = useState([]);
   const [selDevice, setSelDevice] = useState(null);
   const [dgDashboardData, setDgDashboardData] = useState(null);
+  const [dgDashboardTop10Data, setDgDashboardTop10Data] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
@@ -227,13 +437,18 @@ const DashboardScreen = ({ navigation }) => {
     isRefresh ? setRefreshing(true) : setLoading(true);
     setError(null);
     try {
-      const [deviceResp, dgResp, ddResp] = await Promise.all([
+      const startDate = moment().subtract(7, 'days').format('YYYY-MM-DD');
+      const endDate = moment().format('YYYY-MM-DD');
+
+      const [deviceResp, dgResp, ddResp, top10Resp] = await Promise.all([
         fetchDeviceList(),
         fetchDgDashboard(),
         fetchFilterDropdowns(),
+        fetchDgDashboardTop10({ start_date: startDate, end_date: endDate }),
       ]);
       setDevices(deviceResp.devices || []);
       setDgDashboardData(dgResp || null);
+      setDgDashboardTop10Data(top10Resp || null);
       setDropdowns(ddResp);
     } catch (err) {
       setError(err.message || 'Failed to sync dashboard data');
@@ -244,6 +459,15 @@ const DashboardScreen = ({ navigation }) => {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (nextAppState === 'active') {
+        loadData(true);
+      }
+    });
+    return () => subscription.remove();
+  }, [loadData]);
 
   // Dynamically update dependent dropdowns and preview devices when panel selections change
   useEffect(() => {
@@ -395,6 +619,17 @@ const DashboardScreen = ({ navigation }) => {
     }
     return list;
   }, [baseDevices, secondaryFilter, searchQuery, isDgOn, isMoving]);
+
+  const filteredDgTop10Data = useMemo(() => {
+    if (!dgDashboardTop10Data) return null;
+    const allowedDeviceIds = new Set(filteredDevices.map(d => String(d.id || d.deviceid)));
+
+    return {
+      top_moving: (dgDashboardTop10Data.top_moving || []).filter(item => allowedDeviceIds.has(String(item.deviceid))),
+      top_running: (dgDashboardTop10Data.top_running || []).filter(item => allowedDeviceIds.has(String(item.deviceid))),
+      top_idle: (dgDashboardTop10Data.top_idle || []).filter(item => allowedDeviceIds.has(String(item.deviceid))),
+    };
+  }, [dgDashboardTop10Data, filteredDevices]);
 
   // Device options for the Device dropdown inside the filter panel
   // Dynamically filtered based on the current panel selection via previewDevices
@@ -643,29 +878,15 @@ const DashboardScreen = ({ navigation }) => {
       )}
 
       {/* ── TOP RANKINGS (DG DASHBOARD) ── */}
-      {/* 
-      {filteredDgDashboardData && filteredDgDashboardData.top_moving && filteredDgDashboardData.top_moving.length > 0 && (
-        <TopRankingsCard
-          title="Top Moving DGs"
-          // subtitle="Ranked by total distance travelled (km)."
-          data={filteredDgDashboardData.top_moving}
-          valueKey="total_distance_km"
-          labelKey="device_name"
-          unitFormatter={(val) => `${val.toFixed(2)}km`}
-        />
+      {filteredDgTop10Data && (
+        <View style={{ marginTop: 10 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingHorizontal: 8, marginBottom: 0 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }}>DG Performance</Text>
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#1565C0' }}>Last 7 Days</Text>
+          </View>
+          <Top10BarChart data={filteredDgTop10Data} />
+        </View>
       )}
-
-      {filteredDgDashboardData && filteredDgDashboardData.top_idle && filteredDgDashboardData.top_idle.length > 0 && (
-        <TopRankingsCard
-          title="Top Idle DGs"
-          // subtitle="Ranked by continuous idle time at the same location."
-          data={filteredDgDashboardData.top_idle}
-          valueKey="idle_minutes"
-          labelKey="device_name"
-          unitFormatter={(val) => `${(val / 60).toFixed(1)} hrs`}
-        />
-      )}
-      */}
 
       {/* Table header with filter chips */}
       <View style={styles.tableHeader}>
@@ -794,7 +1015,7 @@ const DashboardScreen = ({ navigation }) => {
         </View>
       )}
 
-      {loading && !refreshing ? (
+      {(loading && !refreshing) || (devices.length === 0 && (loading || refreshing)) ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#1565C0" />
           <Text style={styles.loadingText}>Syncing device metrics...</Text>
@@ -812,7 +1033,7 @@ const DashboardScreen = ({ navigation }) => {
           data={filteredDevices}
           keyboardShouldPersistTaps="always"
           keyExtractor={item => (item.id?.toString() ?? Math.random().toString())}
-          ListHeaderComponent={renderHeader}
+          ListHeaderComponent={renderHeader()}
           renderItem={({ item }) => (
             <DeviceCard
               device={item}

@@ -1,0 +1,97 @@
+﻿                    </Text>
+                  </View>
+
+                  <FlatList
+                    data={tripsToRender}
+                    keyExtractor={(item, idx) => `trip-${idx}`}
+                    scrollEnabled={false}
+                    renderItem={({ item: trip, index: idx }) => (
+                      <View key={idx} style={[styles.card, { padding: 14, marginBottom: 12 }]}>
+                        <View style={styles.tripHeader}>
+                          <Text style={[styles.tripTime, {
+                            fontWeight: 'bold',
+                            color: trip.status === 'OFF' ? '#ef4444'
+                              : (trip.status === 'MOVE' || trip.status === 'MOVING') ? '#10b981'
+                                : '#facc15',
+                          }]}>{trip.status}</Text>
+                          <Text style={styles.tripTime}>{formatTime(trip.startTime)} â€“ {formatTime(trip.endTime)}</Text>
+                          <Text style={styles.tripDur}>{trip.durationHms ? trip.durationHms : formatDuration(trip.duration / 60)}</Text>
+                        </View>
+                        <View style={styles.tripRouteRow}>
+                          <Icon name="play-circle" size={14} color="#10b981" />
+                          <Text style={styles.tripLocText} numberOfLines={1}>{trip.startAddress || 'Loading...'}</Text>
+                        </View>
+                        <View style={styles.tripRouteRow}>
+                          <Icon name="stop-circle" size={14} color="#ef4444" />
+                          <Text style={styles.tripLocText} numberOfLines={1}>{trip.endAddress || 'Loading...'}</Text>
+                        </View>
+                        <View style={styles.tripFooter}>
+                          <Text style={styles.tripDist}>{(trip.distance / 1000).toFixed(2)} km</Text>
+                        </View>
+                      </View>
+                    )}
+                  />
+
+                  {tripTotalPages > 1 && (
+                    <View style={styles.paginationContainer}>
+                      <TouchableOpacity
+                        style={[styles.pageBtn, (tripPage === 1 || tripsLoading) && styles.pageBtnDisabled]}
+                        disabled={tripPage === 1 || tripsLoading}
+                        onPress={() => setTripPage(1)}
+                      >
+                        <Text style={[styles.pageBtnText, tripPage === 1 && styles.pageBtnTextDisabled]}>First</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, (tripPage === 1 || tripsLoading) && styles.pageBtnDisabled]}
+                        disabled={tripPage === 1 || tripsLoading}
+                        onPress={() => setTripPage(prev => Math.max(1, prev - 1))}
+                      >
+                        <Icon name="chevron-left" size={20} color={tripPage === 1 ? '#cbd5e1' : '#0284c7'} />
+                        <Text style={[styles.pageBtnText, tripPage === 1 && styles.pageBtnTextDisabled]}>Prev</Text>
+                      </TouchableOpacity>
+
+                      {Array.from({ length: tripTotalPages }, (_, i) => i + 1)
+                        .filter(p => p === 1 || p === tripTotalPages || Math.abs(p - tripPage) <= 1)
+                        .map((pageNum, idx, arr) => (
+                          <React.Fragment key={pageNum}>
+                            {idx > 0 && arr[idx - 1] !== pageNum - 1 && (
+                              <Text style={{ color: '#94a3b8', paddingHorizontal: 2 }}>â€¦</Text>
+                            )}
+                            <TouchableOpacity
+                              style={[styles.pageNumberBtn, tripPage === pageNum && styles.pageNumberActive]}
+                              onPress={() => setTripPage(pageNum)}
+                              disabled={tripsLoading}
+                            >
+                              <Text style={[styles.pageNumberText, tripPage === pageNum && styles.pageNumberTextActive]}>
+                                {pageNum}
+                              </Text>
+                            </TouchableOpacity>
+                          </React.Fragment>
+                        ))
+                      }
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, (!hasMoreTrips || tripsLoading) && styles.pageBtnDisabled]}
+                        disabled={!hasMoreTrips || tripsLoading}
+                        onPress={() => setTripPage(prev => prev + 1)}
+                      >
+                        <Text style={[styles.pageBtnText, !hasMoreTrips && styles.pageBtnTextDisabled]}>Next</Text>
+                        <Icon name="chevron-right" size={20} color={!hasMoreTrips ? '#cbd5e1' : '#0284c7'} />
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.pageBtn, (tripPage === tripTotalPages || tripsLoading) && styles.pageBtnDisabled]}
+                        disabled={tripPage === tripTotalPages || tripsLoading}
+                        onPress={() => setTripPage(tripTotalPages)}
+                      >
+                        <Text style={[styles.pageBtnText, tripPage === tripTotalPages && styles.pageBtnTextDisabled]}>Last</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* â•â•â•â• DG REPORT â•â•â•â• */}

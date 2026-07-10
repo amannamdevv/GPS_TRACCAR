@@ -17,6 +17,26 @@ const getSignalInfo = (rssiVal) => {
   return { icon: iconName, color: '#10b981' };
 };
 
+const getBatteryInfo = (level, isCharging) => {
+  const pct = parseInt(level) || 0;
+  if (pct === 0) return { name: 'battery-unknown', color: '#ef4444' }; // ? icon for 0%
+  
+  let color = pct <= 20 ? '#ef4444' : pct <= 50 ? '#f59e0b' : '#10b981';
+  let iconName = 'battery';
+  
+  const rounded = Math.round(pct / 10) * 10;
+  if (rounded === 0) iconName = 'battery-outline';
+  else if (rounded < 100) iconName = `battery-${rounded}`;
+  
+  if (isCharging) {
+    if (rounded === 0) iconName = 'battery-charging-outline';
+    else if (rounded < 100) iconName = `battery-charging-${rounded}`;
+    else iconName = 'battery-charging-100';
+  }
+  
+  return { name: iconName, color };
+};
+
 const DeviceCard = ({ device, onPress }) => {
   const [address, setAddress] = useState('Loading address...');
   const signalInfo = getSignalInfo(device.rssi);
@@ -25,6 +45,7 @@ const DeviceCard = ({ device, onPress }) => {
   const isMoving = device.motion_status === 1 || device.motion_status === '1' || device.motion_status === true;
   const isDgOn = device.dg_status === 1 || device.dg_status === '1' || device.dg_status === true;
   const isCharging = device.battery_status === 1 || device.battery_status === '1' || device.battery_status === true;
+  const battInfo = getBatteryInfo(device.battery_level, isCharging);
 
   useEffect(() => {
     let active = true;
@@ -52,26 +73,44 @@ const DeviceCard = ({ device, onPress }) => {
     if (!dateString) return 'Never';
     const date = new Date(dateString);
     if (isNaN(date)) return dateString;
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
   };
 
-  // Calculate ignition duration
+  const formatDurationMins = (mins) => {
+    if (mins < 1) return 'just now';
+    const days = Math.floor(mins / 1440);
+    const hours = Math.floor((mins % 1440) / 60);
+    const m = mins % 60;
+    
+    let parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (m > 0 || parts.length === 0) parts.push(`${m}m`);
+    
+    return parts.join(' ');
+  };
+
+  // Calculate ignition duration (ON)
   const getIgnitionDuration = () => {
     if (!device.ignition_on_time) return null;
     const mins = Math.round((Date.now() - new Date(device.ignition_on_time).getTime()) / 60000);
-    if (mins < 1) return 'just now';
-    return mins >= 60
-      ? `${Math.floor(mins / 60)}h ${mins % 60}m`
-      : `${mins}m`;
+    return formatDurationMins(mins);
+  };
+
+  // Calculate ignition OFF duration
+  const getIgnitionOffDuration = () => {
+    if (!device.ignition_off_time) return null;
+    const mins = Math.round((Date.now() - new Date(device.ignition_off_time).getTime()) / 60000);
+    return formatDurationMins(mins);
   };
 
   const ignitionDuration = getIgnitionDuration();
+  const ignitionOffDuration = getIgnitionOffDuration();
   const showIgnitionTime = isDgOn && device.ignition_status === 1 && ignitionDuration;
 
   // Status colors
@@ -111,30 +150,43 @@ const DeviceCard = ({ device, onPress }) => {
             <Icon
               name="lightning-bolt"
               size={17}
-              color={isDgOn ? '#10b981' : '#64748b'}
+              color={isDgOn ? '#10b981' : '#ef4444'}
             />
             <Text style={styles.telLabel}>DG:</Text>
-            <Text style={[styles.telValue, { color: isDgOn ? '#10b981' : '#0f172a' }]}>
+            <Text style={styles.telValue}>
               {isDgOn ? 'ON' : 'OFF'}
             </Text>
 
-            {/* Ignition Time right next to DG ON */}
+            {/* Ignition Time right next to DG ON/OFF */}
             {showIgnitionTime && (
               <View style={styles.ignitionTimeContainer}>
                 <Icon name="clock-outline" size={13} color="#10b981" />
                 <Text style={styles.ignitionTimeText}>{ignitionDuration} ago</Text>
               </View>
             )}
+
+            {!isDgOn && ignitionOffDuration && (
+              <View style={styles.ignitionTimeContainer}>
+                <Icon name="clock-outline" size={13} color="#ef4444" />
+                <Text style={[styles.ignitionTimeText, { color: '#ef4444' }]}>{ignitionOffDuration} ago</Text>
+              </View>
+            )}
           </View>
 
+          {/* Industry ID */}
+          <View style={styles.telItem}>
+            <Icon name="factory" size={17} color="#64748b" />
+            <Text style={styles.telLabel}>Site id:</Text>
+            <Text style={styles.telValue}>{device.nearest_indus_id || 'N/A'}</Text>
+          </View>
           {/* Moving Status */}
           <View style={styles.telItem}>
             <Icon
               name="run"
               size={17}
-              color={isMoving ? '#10b981' : '#64748b'}
+              color={isMoving ? '#3b82f6' : '#f59e0b'}
             />
-            <Text style={[styles.telValue, { color: isMoving ? '#10b981' : '#0f172a' }]}>
+            <Text style={styles.telValue}>
               {isMoving ? 'Moving' : 'Stopped'}
             </Text>
           </View>
@@ -142,13 +194,13 @@ const DeviceCard = ({ device, onPress }) => {
           {/* Battery */}
           <View style={styles.telItem}>
             <Icon
-              name={isCharging ? "battery-charging" : "battery-std"}
+              name={battInfo.name}
               size={17}
-              color="#10b981"
+              color={battInfo.color}
             />
             <Text style={styles.telLabel}>Batt:</Text>
             <Text style={styles.telValue}>
-              {device.battery_level != null ? `${device.battery_level}%` : '0%'}
+              {device.battery_level != null ? `${parseInt(device.battery_level)}%` : '0%'}
             </Text>
           </View>
 
@@ -157,17 +209,12 @@ const DeviceCard = ({ device, onPress }) => {
             <Icon
               name="flash"
               size={17}
-              color={device.adc1 != null ? '#f59e0b' : '#64748b'}
+              color={device.adc1 != null ? (parseFloat(device.adc1) > 0 ? '#f59e0b' : '#ef4444') : '#64748b'}
             />
 
-            <Text style={styles.telLabel}>Volt:</Text>
+            <Text style={styles.telLabel}>Ext. Batt:</Text>
 
-            <Text
-              style={[
-                styles.telValue,
-                { color: device.adc1 != null ? '#f59e0b' : '#0f172a' }
-              ]}
-            >
+            <Text style={styles.telValue}>
               {device.adc1 != null ? `${parseFloat(device.adc1).toFixed(2)}V` : 'N/A'}
             </Text>
           </View>

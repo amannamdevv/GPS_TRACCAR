@@ -9,7 +9,7 @@ import { WebView } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import moment from 'moment';
-import DatePicker from 'react-native-date-picker';
+import DatePicker from '../../components/CalendarPickerModal';
 import { reverseGeocode, fetchPositionHistory } from '../../api/webApi';
 
 const { width } = Dimensions.get('window');
@@ -87,7 +87,7 @@ const normalizePoint = (p) => ({
 });
 
 const PlaybackScreen = ({ route, navigation }) => {
-  const { device } = route.params;
+  const { device, initialDate } = route.params;
   const insets = useSafeAreaInsets();
   const webViewRef = useRef(null);
 
@@ -97,9 +97,9 @@ const PlaybackScreen = ({ route, navigation }) => {
 
   // Time modal
   const [showTimeModal, setShowTimeModal] = useState(false);
-  const [timeframe, setTimeframe] = useState('today');
-  const [tempTf, setTempTf] = useState('today');
-  const [customStart, setCustomStart] = useState(new Date());
+  const [timeframe, setTimeframe] = useState(initialDate ? 'custom' : 'today');
+  const [tempTf, setTempTf] = useState(initialDate ? 'custom' : 'today');
+  const [customStart, setCustomStart] = useState(initialDate ? new Date(initialDate) : new Date());
   const [showStartPicker, setShowStartPicker] = useState(false);
 
   // Playback state
@@ -143,12 +143,22 @@ const PlaybackScreen = ({ route, navigation }) => {
   const isPlayingRef = useRef(false);
   const pauseTimeoutRef = useRef(null);
 
+  const abortControllerRef = useRef(null);
+
   useEffect(() => { routePointsRef.current = routePoints; }, [routePoints]);
   useEffect(() => { mileageArrRef.current = mileageArr; }, [mileageArr]);
   useEffect(() => { currentAddressRef.current = currentAddress; }, [currentAddress]);
   useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
   useEffect(() => { followModeRef.current = followMode; }, [followMode]);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   const deviceId = device.deviceid ?? device.id;
   const BAR_WIDTH = width - 40;
@@ -237,6 +247,12 @@ const PlaybackScreen = ({ route, navigation }) => {
   const loadAndAnimate = useCallback(async (tf) => {
     if (!mapReady) return;
 
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
     setLoading(true);
     setLoadError('');
     setShowHUD(false);
@@ -257,7 +273,8 @@ const PlaybackScreen = ({ route, navigation }) => {
     const { from, to, fromDate, toDate } = getTimeRange(tf);
 
     try {
-      const raw = await fetchPositionHistory(deviceId, fromDate, toDate);
+      const raw = await fetchPositionHistory(deviceId, fromDate, toDate, { signal });
+      if (signal.aborted) return;
 
       if (!raw || raw.length === 0) {
         setLoadError('No GPS data found for the selected time range.');
@@ -414,10 +431,14 @@ const PlaybackScreen = ({ route, navigation }) => {
 
       setShowHUD(true);
     } catch (e) {
-      console.warn('[loadAndAnimate]', e);
-      setLoadError('An error occurred while loading data.');
+      if (!signal.aborted) {
+        console.warn('[loadAndAnimate]', e);
+        setLoadError('An error occurred while loading data.');
+      }
     } finally {
-      setLoading(false);
+      if (!signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [mapReady, deviceId, sendToMap, getTimeRange, getCachedAddress, selectedDateStr]);
 
@@ -1009,18 +1030,20 @@ setTimeout(function(){
           </View>
 
           {/* Total Moving Time / Total Stop Time for the whole selected day */}
+          {/*
           <View style={s.hudSummaryRow}>
             <View style={[s.summaryPill, { borderColor: 'rgba(74,222,128,0.4)', backgroundColor: 'rgba(74,222,128,0.10)' }]}>
               <Icon name="speedometer" size={11} color="#4ade80" />
               <Text style={s.summaryLbl}>Total Move</Text>
               <Text style={[s.summaryVal, { color: '#4ade80' }]}>{fmtDuration(timeSplit.moveMs)}</Text>
             </View>
-            {/* <View style={[s.summaryPill, { borderColor: 'rgba(249,115,22,0.4)', backgroundColor: 'rgba(249,115,22,0.10)' }]}>
+            <View style={[s.summaryPill, { borderColor: 'rgba(249,115,22,0.4)', backgroundColor: 'rgba(249,115,22,0.10)' }]}>
               <Icon name="stop-circle-outline" size={11} color="#f97316" />
               <Text style={s.summaryLbl}>Total Stop</Text>
               <Text style={[s.summaryVal, { color: '#f97316' }]}>{fmtDuration(timeSplit.stopMs)}</Text>
-            </View> */}
+            </View> 
           </View>
+          */}
 
           {/* Progress bar */}
           <View style={s.progWrap}>
@@ -1139,6 +1162,7 @@ setTimeout(function(){
       {/* Date picker — Custom Date supports a single day only */}
       <DatePicker
         modal open={showStartPicker} date={customStart} mode="date"
+        minimumDate={moment().subtract(30, 'days').toDate()} maximumDate={new Date()}
         onConfirm={d => { setShowStartPicker(false); setCustomStart(d); }}
         onCancel={() => setShowStartPicker(false)}
         title="Select Date"

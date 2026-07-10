@@ -3,6 +3,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AuthContext } from '../context/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // Services
 import AlertNotificationService from '../services/AlertNotificationService';
 import UpdateChecker from '../services/UpdateChecker';
@@ -30,6 +31,11 @@ const Stack = createStackNavigator();
 const DashboardStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="DashboardMain" component={DashboardScreen} />
+    <Stack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
+    <Stack.Screen name="Tracking" component={TrackingScreen} />
+    <Stack.Screen name="Playback" component={PlaybackScreen} />
+    <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
+    <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
   </Stack.Navigator>
 );
 const MonitorStack = () => (
@@ -39,6 +45,7 @@ const MonitorStack = () => (
     <Stack.Screen name="Playback" component={PlaybackScreen} />
     <Stack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
     <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
+    <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
   </Stack.Navigator>
 );
 
@@ -57,6 +64,11 @@ const AlertsStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="AlertsList" component={AlertsScreen} />
     <Stack.Screen name="AlertDetails" component={AlertDetailsScreen} />
+    <Stack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
+    <Stack.Screen name="Tracking" component={TrackingScreen} />
+    <Stack.Screen name="Playback" component={PlaybackScreen} />
+    <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
+    <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
   </Stack.Navigator>
 );
 
@@ -67,12 +79,18 @@ const MeStack = () => (
     <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
     <Stack.Screen name="Settings" component={SettingsScreen} />
     <Stack.Screen name="AlarmDashboard" component={AlarmDashboardScreen} />
+    <Stack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
+    <Stack.Screen name="Tracking" component={TrackingScreen} />
+    <Stack.Screen name="Playback" component={PlaybackScreen} />
+    <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
   </Stack.Navigator>
 );
 
 // ─── MAIN TAB NAVIGATOR ──────────────────────────────────────────────────────
 const MainTabNavigator = () => {
   const { userToken, isLoading } = React.useContext(AuthContext);
+  const insets = useSafeAreaInsets();
+  
   useEffect(() => {
     // Start services only when the user is authenticated and auth restoration is complete
     if (!isLoading && userToken) {
@@ -110,8 +128,8 @@ const MainTabNavigator = () => {
           backgroundColor: '#F9F9F9',
           borderTopWidth: 1,
           borderTopColor: '#e2e8f0',
-          height: 60,
-          paddingBottom: 8,
+          height: 52 + Math.max(8, insets.bottom),
+          paddingBottom: Math.max(8, insets.bottom),
           paddingTop: 8,
         },
         tabBarShowLabel: true,
