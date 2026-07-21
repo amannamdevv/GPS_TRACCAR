@@ -3,14 +3,14 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, StyleSheet, TouchableOpacity, Text,
-  ActivityIndicator, StatusBar, Dimensions, Modal,
+  ActivityIndicator, StatusBar, Dimensions, Modal, ScrollView, Pressable
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import moment from 'moment';
 import DatePicker from '../../components/CalendarPickerModal';
-import { reverseGeocode, fetchPositionHistory } from '../../api/webApi';
+import { reverseGeocode, fetchPositionHistory, getTripsReport } from '../../api/webApi';
 
 const { width } = Dimensions.get('window');
 const fmt = (m) => m.format('YYYY-MM-DD HH:mm:ss');
@@ -34,28 +34,39 @@ const courseLabel = (deg) => {
   return dirs[Math.round((deg || 0) / 45) % 8];
 };
 
-const computeMileage = (points) => {
+const computeMileage = (points, targetTotalKm = 0) => {
+  if (points.length === 0) return [];
   const miles = [0];
+  let acc = 0;
   for (let i = 1; i < points.length; i++) {
     const d = haversine(
       points[i - 1].latitude, points[i - 1].longitude,
       points[i].latitude, points[i].longitude,
     );
-    miles.push(miles[i - 1] + d / 1000);
+    // Only accumulate distance if vehicle is moving, to avoid stationary GPS drift
+    if ((points[i].speedKmh || 0) > 2) {
+      acc += d / 1000;
+    }
+    miles.push(acc);
+  }
+  
+  // Scale the local running mileage to exactly match the API's total distance
+  if (targetTotalKm > 0 && acc > 0) {
+    const scale = targetTotalKm / acc;
+    for (let i = 0; i < miles.length; i++) {
+      miles[i] *= scale;
+    }
   }
   return miles;
 };
 
-// Total moving-time vs stopped-time for the whole loaded day (independent of
-// where the playback scrubber currently is) — based on time between consecutive
-// GPS fixes, split using the same >2 km/h MOVE / STOP threshold used elsewhere.
+// Total moving-time vs stopped-time for the whole loaded day
 const computeTimeSplit = (points) => {
   let moveMs = 0, stopMs = 0;
   for (let i = 1; i < points.length; i++) {
     const dt = moment(points[i].fixTime).valueOf() - moment(points[i - 1].fixTime).valueOf();
     if (dt <= 0) continue;
-    const avgSpeed = (parseFloat(points[i - 1].speedKmh) + parseFloat(points[i].speedKmh)) / 2;
-    if (avgSpeed > 2) moveMs += dt; else stopMs += dt;
+    if (points[i - 1].final_status === 'MOVE') moveMs += dt; else stopMs += dt;
   }
   return { moveMs, stopMs };
 };
@@ -77,14 +88,26 @@ const getStatusColor = (s) => {
 };
 
 // Normalize a single point from positions_view
-const normalizePoint = (p) => ({
-  latitude: parseFloat(p.latitude ?? 0),
-  longitude: parseFloat(p.longitude ?? 0),
-  speedKmh: parseFloat(p.speed ?? 0),
-  course: parseFloat(p.course ?? 0),
-  fixTime: p.fixtime || p.devicetime || null,
-  final_status: (parseFloat(p.speed ?? 0) > 2) ? 'MOVE' : 'STOP',
-});
+const normalizePoint = (p) => {
+  const speedKmh = parseFloat(p.speed ?? 0) * 1.852; // Convert knots to km/h
+  let attrs = {};
+  try {
+    if (typeof p.attributes === 'string') attrs = JSON.parse(p.attributes);
+    else if (typeof p.attributes === 'object') attrs = p.attributes;
+  } catch (e) {}
+
+  const isMoving = speedKmh > 2;
+  const final_status = isMoving ? 'MOVE' : 'STOP';
+  return {
+    latitude: parseFloat(p.latitude ?? 0),
+    longitude: parseFloat(p.longitude ?? 0),
+    speedKmh: speedKmh,
+    course: parseFloat(p.course ?? 0),
+    fixTime: p.fixtime || p.devicetime || null,
+    final_status: isMoving ? 'MOVE' : 'STOP',
+    totalDistance: parseFloat(attrs.totalDistance ?? 0),
+  };
+};
 
 const PlaybackScreen = ({ route, navigation }) => {
   const { device, initialDate } = route.params;
@@ -111,6 +134,7 @@ const PlaybackScreen = ({ route, navigation }) => {
   const [currentAddress, setCurrentAddress] = useState('');
   const [showHUD, setShowHUD] = useState(false);
   const [timeSplit, setTimeSplit] = useState({ moveMs: 0, stopMs: 0 }); // total move/stop time for the day
+  const [apiSummary, setApiSummary] = useState({ distance: '0.00', moveMs: 0, stops: 0 });
 
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [scrubRatio, setScrubRatio] = useState(0);
@@ -162,7 +186,7 @@ const PlaybackScreen = ({ route, navigation }) => {
 
   const deviceId = device.deviceid ?? device.id;
   const BAR_WIDTH = width - 40;
-  const SPEEDS = [1, 2, 4, 8, 16];
+  const SPEEDS = [0.25, 0.5, 1, 2, 5, 10, 20];
 
   // Send message to map
   const sendToMap = useCallback((type, payload = {}) => {
@@ -264,6 +288,7 @@ const PlaybackScreen = ({ route, navigation }) => {
     setCurrentAddress('');
     setLiveTel({ speed: 0, course: 0, courseDir: 'North', mileage: '0.00', status: '—', time: '—' });
     setTimeSplit({ moveMs: 0, stopMs: 0 });
+    setApiSummary({ distance: '0.00', moveMs: 0, stops: 0 });
     lastGeoIndexRef.current = -1;
     stopsRef.current = [];
     pausedStopsRef.current = new Set();
@@ -273,8 +298,30 @@ const PlaybackScreen = ({ route, navigation }) => {
     const { from, to, fromDate, toDate } = getTimeRange(tf);
 
     try {
-      const raw = await fetchPositionHistory(deviceId, fromDate, toDate, { signal });
+      const [raw, trips] = await Promise.all([
+        fetchPositionHistory(deviceId, fromDate, toDate, { signal }),
+        getTripsReport(deviceId, fromDate, toDate)
+      ]);
       if (signal.aborted) return;
+      
+      let apiDist = 0;
+      let apiMoveMs = 0;
+      let apiStops = 0;
+      trips.forEach(t => {
+         const st = (t.status || '').toUpperCase();
+         if (st === 'MOVE' || st === 'MOVING') {
+            apiDist += (t.distance || 0); // distance in meters
+            apiMoveMs += (t.duration || 0) * 1000; // duration in ms
+         }
+         if (st === 'STOP' || st === 'STOPPED') {
+            apiStops++;
+         }
+      });
+      setApiSummary({
+         distance: (apiDist / 1000).toFixed(2),
+         moveMs: apiMoveMs,
+         stops: apiStops
+      });
 
       if (!raw || raw.length === 0) {
         setLoadError('No GPS data found for the selected time range.');
@@ -284,10 +331,11 @@ const PlaybackScreen = ({ route, navigation }) => {
       }
 
       let points = raw
+        .filter(p => String(p.deviceid) === String(deviceId) || String(p.device_id) === String(deviceId) || p.deviceid == null)
         .map(normalizePoint)
         .filter(p => p.latitude !== 0 && p.longitude !== 0);
 
-      // Client‑side time filter (API returns whole day, we narrow to selected hours)
+      // Client‑side time filter for points
       const fromMs = moment(from, 'YYYY-MM-DD HH:mm:ss').valueOf();
       const toMs = moment(to, 'YYYY-MM-DD HH:mm:ss').valueOf();
       points = points.filter(p => {
@@ -325,52 +373,60 @@ const PlaybackScreen = ({ route, navigation }) => {
         return;
       }
 
-      const miles = computeMileage(points);
+      const miles = computeMileage(points, apiDist / 1000);
       setRoutePoints(points);
       setMileageArr(miles);
       setTimeSplit(computeTimeSplit(points));
 
-      // Calculate stops (speed < 1.0 km/h for >= 10 minutes / 600 seconds)
+      // Use stops directly from the API trips response for exact match
       const stopEventsRaw = [];
-      let currentStop = null;
-      for (let i = 0; i < points.length; i++) {
-        const pt = points[i];
-        if (parseFloat(pt.speedKmh) < 1.0) {
-          if (!currentStop) {
-            currentStop = {
-              lat: pt.latitude, lng: pt.longitude,
-              startTime: pt.fixTime, endTime: pt.fixTime,
-              startIdx: i, endIdx: i,
-            };
-          } else {
-            currentStop.endTime = pt.fixTime;
-            currentStop.endIdx = i;
-          }
-        } else {
-          if (currentStop) {
-            const dur = moment(currentStop.endTime).diff(moment(currentStop.startTime), 'seconds');
-            if (dur >= 600) stopEventsRaw.push({ ...currentStop, durationSec: dur });
-            currentStop = null;
-          }
-        }
-      }
-      if (currentStop) {
-        const dur = moment(currentStop.endTime).diff(moment(currentStop.startTime), 'seconds');
-        if (dur >= 600) stopEventsRaw.push({ ...currentStop, durationSec: dur });
-      }
+      trips.forEach(t => {
+        const st = (t.status || '').toUpperCase();
+        if (st === 'STOP' || st === 'STOPPED') {
+          // Filter stops that are outside the requested time window
+          const tripStartMs = moment(t.startTime).valueOf();
+          const tripEndMs = t.endTime ? moment(t.endTime).valueOf() : tripStartMs;
+          if (tripStartMs > toMs || tripEndMs < fromMs) return;
 
-      // Reverse-geocode each stop (reusing the existing cached helper)
+          // Find closest point index for animation matching
+          let closestIdx = 0;
+          let minDist = Infinity;
+          const tStartMs = moment(t.startTime).valueOf();
+          for (let i = 0; i < points.length; i++) {
+             const pMs = moment(points[i].fixTime).valueOf();
+             const diff = Math.abs(pMs - tStartMs);
+             if (diff < minDist) {
+                minDist = diff;
+                closestIdx = i;
+             }
+          }
+          stopEventsRaw.push({
+            lat: t.startLat,
+            lng: t.startLon,
+            startTime: t.startTime,
+            endTime: t.endTime,
+            durationSec: t.duration || 0,
+            startIdx: closestIdx,
+            endIdx: closestIdx,
+            apiAddress: t.startAddress || null,
+          });
+        }
+      });
+
+      // Reverse-geocode each stop (using API address if available, else local)
       const stopEvents = await Promise.all(stopEventsRaw.map(async (st) => {
-        let addr = '';
-        try { addr = await getCachedAddress(st.lat, st.lng); } catch { addr = ''; }
+        let addr = st.apiAddress || '';
+        if (!addr) {
+          try { addr = await getCachedAddress(st.lat, st.lng); } catch { addr = ''; }
+        }
         const dur = st.durationSec;
         return {
           lat: st.lat,
           lng: st.lng,
           startIdx: st.startIdx,
           endIdx: st.endIdx,
-          startTime: moment(st.startTime).format('DD MMM hh:mm A'),
-          endTime: moment(st.endTime).format('DD MMM hh:mm A'),
+          startTime: moment(st.startTime).format('DD MMM HH:mm'),
+          endTime: moment(st.endTime).format('DD MMM HH:mm'),
           duration: dur >= 3600
             ? Math.floor(dur / 3600) + 'h ' + Math.floor((dur % 3600) / 60) + 'm'
             : Math.floor(dur / 60) + 'm',
@@ -394,13 +450,21 @@ const PlaybackScreen = ({ route, navigation }) => {
       });
 
       // Draw full route on map
+      const startMs = moment(points[0].fixTime).valueOf();
+      const mapCoords = points.map((p, i) => ({
+        lat: p.latitude, lng: p.longitude, 
+        ms: moment(p.fixTime).valueOf() - startMs,
+        spd: p.speedKmh, crs: p.course, mlg: miles[i],
+        fixMs: moment(p.fixTime).valueOf()
+      }));
+
       sendToMap('LOAD_FULL_ROUTE', {
-        coords: points.map(pt => [pt.latitude, pt.longitude]),
+        coords: mapCoords,
         stops: stopEvents,
         startCoord: [fp.latitude, fp.longitude],
         endCoord: [lp.latitude, lp.longitude],
-        startTime: moment(fp.fixTime).format('DD MMM YYYY, hh:mm:ss A'),
-        endTime: moment(lp.fixTime).format('DD MMM YYYY, hh:mm:ss A'),
+        startTime: moment(fp.fixTime).format('DD MMM YYYY, HH:mm:ss'),
+        endTime: moment(lp.fixTime).format('DD MMM YYYY, HH:mm:ss'),
         totalKm: miles[miles.length - 1]?.toFixed(2) || '0.00',
         selectedDate: selectedDateStr,
         firstTelemetry: {
@@ -425,8 +489,8 @@ const PlaybackScreen = ({ route, navigation }) => {
       sendToMap('SET_MARKER_INFO', {
         startAddress: startAddr || '',
         endAddress: endAddr || '',
-        startTime: moment(fp.fixTime).format('DD MMM YYYY, hh:mm:ss A'),
-        endTime: moment(lp.fixTime).format('DD MMM YYYY, hh:mm:ss A'),
+        startTime: moment(fp.fixTime).format('DD MMM YYYY, HH:mm:ss'),
+        endTime: moment(lp.fixTime).format('DD MMM YYYY, HH:mm:ss'),
       });
 
       setShowHUD(true);
@@ -447,164 +511,28 @@ const PlaybackScreen = ({ route, navigation }) => {
     if (mapReady && !showTimeModal) loadAndAnimate(timeframe);
   }, [mapReady]); // eslint-disable-line
 
-  // Animation loop (smooth interpolation + 2s auto-pause at each detected stop)
+  // Playback Control Sync
   useEffect(() => {
-    if (!isPlaying || routePointsRef.current.length < 2) {
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-      return;
+    if (routePoints.length < 2) return;
+    if (isPlaying) {
+      sendToMap('PLAY', { speed: playSpeed, elapsed: elapsedMsRef.current, follow: followModeRef.current });
+    } else {
+      sendToMap('PAUSE');
     }
+  }, [isPlaying, playSpeed]);
 
-    const pts = routePointsRef.current;
-    const miles = mileageArrRef.current;
-    const startMs = moment(pts[0].fixTime).valueOf();
-    const totalMs = moment(pts[pts.length - 1].fixTime).valueOf() - startMs;
-    const pointTimes = pts.map(p => moment(p.fixTime).valueOf() - startMs);
-    const resumeMs = elapsedMsRef.current || pointTimes[currentIndexRef.current] || 0;
-    let animStart = performance.now() - resumeMs / playSpeed;
-    let lastIdx = currentIndexRef.current;
-
-    const animate = (now) => {
-      const elapsed = (now - animStart) * playSpeed;
-      elapsedMsRef.current = Math.min(elapsed, totalMs);
-
-      if (elapsed >= totalMs) {
-        const lp = pts[pts.length - 1];
-        const tel = {
-          time: moment(lp.fixTime).format('HH:mm:ss'),
-          speed: '0', course: Math.round(lp.course),
-          courseDir: courseLabel(lp.course),
-          mileage: (miles[miles.length - 1] || 0).toFixed(2),
-          status: lp.final_status || '—', address: currentAddressRef.current,
-        };
-        sendToMap('UPDATE_CAR', {
-          coord: [lp.latitude, lp.longitude],
-          course: lp.course, speed: 0, follow: false,
-          telemetry: { ...tel, time: moment(lp.fixTime).format('YYYY-MM-DD HH:mm:ss') },
-        });
-        setLiveTel(tel);
-        setCurrentIndex(pts.length - 1);
-        setIsPlaying(false);
-        return;
-      }
-
-      let lo = 0, hi = pts.length - 2;
-      while (lo < hi) {
-        const mid = (lo + hi + 1) >> 1;
-        if (pointTimes[mid] <= elapsed) lo = mid; else hi = mid - 1;
-      }
-      const idx = lo;
-
-      // ── Auto-pause: if we've just reached the start of a detected stop, freeze
-      // the vehicle exactly there for 2 seconds, then resume automatically.
-      // Each stop is only ever paused-at once per load (tracked in pausedStopsRef).
-      const stops = stopsRef.current;
-      let hitStopIdx = -1;
-      for (let si = 0; si < stops.length; si++) {
-        if (stops[si].startIdx === idx && !pausedStopsRef.current.has(si)) { hitStopIdx = si; break; }
-      }
-      if (hitStopIdx !== -1) {
-        pausedStopsRef.current.add(hitStopIdx);
-        const sp = pts[idx];
-        const pinnedTel = {
-          time: moment(sp.fixTime).format('HH:mm:ss'),
-          speed: '0',
-          course: Math.round(sp.course),
-          courseDir: courseLabel(sp.course),
-          mileage: (miles[idx] || 0).toFixed(2),
-          status: 'STOP',
-          address: currentAddressRef.current,
-        };
-        sendToMap('UPDATE_CAR', {
-          coord: [sp.latitude, sp.longitude],
-          course: sp.course, speed: 0, follow: followModeRef.current,
-          telemetry: { ...pinnedTel, time: moment(sp.fixTime).format('YYYY-MM-DD HH:mm:ss') },
-        });
-        setLiveTel(pinnedTel);
-        setCurrentIndex(idx);
-        lastIdx = idx;
-        elapsedMsRef.current = pointTimes[idx];
-
-        if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
-        pauseTimeoutRef.current = setTimeout(() => {
-          pauseTimeoutRef.current = null;
-          if (!isPlayingRef.current) return; // user manually paused — don't auto-resume
-          animStart = performance.now() - elapsedMsRef.current / playSpeed;
-          animationRef.current = requestAnimationFrame(animate);
-        }, 2000);
-        return; // freeze here — no new frame scheduled until the timeout fires
-      }
-
-      const segS = pointTimes[idx], segE = pointTimes[idx + 1];
-      const frac = segE > segS ? Math.max(0, Math.min(1, (elapsed - segS) / (segE - segS))) : 0;
-
-      const p1 = pts[idx], p2 = pts[idx + 1];
-      const lat = p1.latitude + (p2.latitude - p1.latitude) * frac;
-      const lng = p1.longitude + (p2.longitude - p1.longitude) * frac;
-      const spd = p1.speedKmh + (p2.speedKmh - p1.speedKmh) * frac;
-      const crs = p1.course + (p2.course - p1.course) * frac;
-      const mlg = (miles[idx] || 0) + ((miles[idx + 1] || 0) - (miles[idx] || 0)) * frac;
-      const fixMs = moment(p1.fixTime).valueOf() + frac * (moment(p2.fixTime).valueOf() - moment(p1.fixTime).valueOf());
-
-      const curStatus = spd > 2 ? 'MOVE' : 'STOP';
-
-      const tel = {
-        time: moment(fixMs).format('YYYY-MM-DD HH:mm:ss'),
-        speed: spd.toFixed(0),
-        course: Math.round(crs),
-        courseDir: courseLabel(crs),
-        mileage: mlg.toFixed(2),
-        status: curStatus,
-        address: currentAddressRef.current,
-      };
-
-      if (now - lastBridgeSendRef.current >= 16) {
-        sendToMap('UPDATE_CAR', { coord: [lat, lng], course: crs, speed: spd, follow: followModeRef.current, telemetry: tel });
-        lastBridgeSendRef.current = now;
-      }
-
-      if (now - lastTelUpdateRef.current >= 100) {
-        setLiveTel({
-          speed: spd.toFixed(0),
-          course: Math.round(crs),
-          courseDir: courseLabel(crs),
-          mileage: mlg.toFixed(2),
-          status: curStatus,
-          time: moment(fixMs).format('HH:mm:ss'),
-        });
-        lastTelUpdateRef.current = now;
-      }
-
-      if (idx !== lastIdx) {
-        setCurrentIndex(idx);
-        lastIdx = idx;
-        if (idx - lastGeoIndexRef.current >= 12) {
-          lastGeoIndexRef.current = idx;
-          getCachedAddress(pts[idx].latitude, pts[idx].longitude).then(addr => {
-            if (addr) setCurrentAddress(addr);
-          });
-        }
-      }
-
-      animationRef.current = requestAnimationFrame(animate);
-    };
-
-    animationRef.current = requestAnimationFrame(animate);
-    return () => {
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-      if (pauseTimeoutRef.current) { clearTimeout(pauseTimeoutRef.current); pauseTimeoutRef.current = null; }
-    };
-  }, [isPlaying, playSpeed, routePoints]); // eslint-disable-line
+  useEffect(() => {
+    sendToMap('UPDATE_FOLLOW', { follow: followMode });
+  }, [followMode]);
 
   // Seek
   const seekTo = useCallback((idx) => {
     const pts = routePointsRef.current;
-    const miles = mileageArrRef.current;
-    const pt = pts[idx];
-    if (!pt) return;
+    if (idx < 0 || idx >= pts.length) return;
     setCurrentIndex(idx);
     if (pts.length > 0) {
       const s0 = moment(pts[0].fixTime).valueOf();
-      elapsedMsRef.current = moment(pt.fixTime).valueOf() - s0;
+      elapsedMsRef.current = moment(pts[idx].fixTime).valueOf() - s0;
     }
 
     // Keep "pause only once per stop" consistent with manual seeking: stops
@@ -614,35 +542,50 @@ const PlaybackScreen = ({ route, navigation }) => {
       if (st.startIdx <= idx) pausedStopsRef.current.add(si);
       else pausedStopsRef.current.delete(si);
     });
-    if (pauseTimeoutRef.current) { clearTimeout(pauseTimeoutRef.current); pauseTimeoutRef.current = null; }
-
-    const spd = parseFloat(pt.speedKmh);
-    const curStatus = spd > 2 ? 'MOVE' : 'STOP';
-    const tel = {
-      time: moment(pt.fixTime).format('HH:mm:ss'),
-      speed: spd.toFixed(0),
-      course: Math.round(pt.course),
-      courseDir: courseLabel(pt.course),
-      mileage: (miles[idx] || 0).toFixed(2),
-      status: curStatus,
-    };
-    setLiveTel(tel);
-    sendToMap('UPDATE_CAR', {
-      coord: [pt.latitude, pt.longitude],
-      course: pt.course, speed: spd, follow: followModeRef.current,
-      telemetry: { ...tel, time: moment(pt.fixTime).format('YYYY-MM-DD HH:mm:ss'), address: currentAddressRef.current },
-    });
-    getCachedAddress(pt.latitude, pt.longitude).then(addr => {
-      if (addr) setCurrentAddress(addr);
-    });
-  }, [sendToMap, getCachedAddress]);
+    sendToMap('SEEK', { elapsed: elapsedMsRef.current });
+  }, [sendToMap]);
 
   const onMessage = useCallback((event) => {
     try {
-      const data = JSON.parse(event.nativeEvent.data);
-      if (data.type === 'MAP_READY') setMapReady(true);
+      const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === 'MAP_READY') setMapReady(true);
+      if (msg.type === 'SYNC') {
+        elapsedMsRef.current = msg.elapsed;
+        const newIdx = msg.idx;
+        
+        // Check for stops manually
+        const stops = stopsRef.current;
+        let hitStopIdx = -1;
+        for (let si = 0; si < stops.length; si++) {
+          if (stops[si].startIdx === newIdx && !pausedStopsRef.current.has(si)) { hitStopIdx = si; break; }
+        }
+        if (hitStopIdx !== -1) {
+          pausedStopsRef.current.add(hitStopIdx);
+        }
+        
+        if (newIdx !== lastGeoIndexRef.current) {
+           lastGeoIndexRef.current = newIdx;
+           setCurrentIndex(newIdx);
+           getCachedAddress(routePointsRef.current[newIdx].latitude, routePointsRef.current[newIdx].longitude).then(addr => {
+              if (addr) setCurrentAddress(addr);
+           });
+        }
+        setLiveTel({
+          speed: msg.tel.speed,
+          course: msg.tel.course,
+          courseDir: courseLabel(msg.tel.course),
+          mileage: msg.tel.mileage,
+          status: msg.tel.status,
+          time: moment(msg.tel.fixMs).format('HH:mm:ss'),
+        });
+      }
+      if (msg.type === 'END') {
+        setIsPlaying(false);
+        elapsedMsRef.current = msg.elapsed;
+        setCurrentIndex(routePointsRef.current.length - 1);
+      }
     } catch (_) { }
-  }, []);
+  }, [getCachedAddress]);
 
   const progress = routePoints.length > 1
     ? (currentIndex / (routePoints.length - 1)) * 100 : 0;
@@ -688,17 +631,20 @@ const PlaybackScreen = ({ route, navigation }) => {
     .lpc .addr{font-size:10px;color:#6b7280;white-space:normal;max-width:200px;line-height:1.45;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06);margin-top:3px}
     .leaflet-container a.leaflet-popup-close-button{color:#4b5563!important;font-size:16px!important;top:6px!important;right:8px!important}
     .pin{display:flex;align-items:center;justify-content:center;border-radius:50%;font-weight:800;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.7)}
-    .mk-popup{font-family:'Segoe UI',system-ui,sans-serif;min-width:180px;padding:10px 12px}
-    .mk-popup .mk-title{font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid rgba(255,255,255,0.08)}
-    .mk-popup .mk-title.start{color:#22c55e}
-    .mk-popup .mk-title.end{color:#ef4444}
+    .leaflet-popup-content-wrapper{background:#ffffff!important;border:1px solid #e2e8f0!important;border-radius:10px!important;box-shadow:0 6px 16px rgba(0,0,0,0.15)!important;padding:0!important;}
+    .leaflet-popup-tip{background:#ffffff!important;}
+    .mk-popup{font-family:'Segoe UI',system-ui,sans-serif;min-width:160px;max-width:200px;padding:8px 12px;background:#ffffff;border-radius:10px;}
+    .mk-popup .mk-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid #e2e8f0}
+    .mk-popup .mk-title.start{color:#16a34a}
+    .mk-popup .mk-title.end{color:#dc2626}
     .mk-popup .mk-row{display:flex;gap:6px;align-items:flex-start;padding:3px 0}
-    .mk-popup .mk-lbl{color:#4b5563;min-width:50px;font-size:9.5px;text-transform:uppercase;letter-spacing:.4px;flex-shrink:0}
-    .mk-popup .mk-val{color:#e2e8f0;font-weight:700;font-size:11.5px}
-    .mk-popup .mk-addr{color:#94a3b8;font-size:10px;white-space:normal;max-width:200px;line-height:1.45;margin-top:4px;padding-top:4px;border-top:1px solid rgba(255,255,255,0.06)}
+    .mk-popup .mk-lbl{color:#64748b;min-width:45px;font-size:10px;text-transform:uppercase;font-weight:600;flex-shrink:0}
+    .mk-popup .mk-val{color:#334155;font-weight:700;font-size:13px}
+    .mk-popup .mk-addr{color:#475569;font-size:11.5px;white-space:normal;max-width:200px;line-height:1.4;margin-top:5px;padding-top:5px;border-top:1px solid #e2e8f0}
     .dateBadge{position:absolute;top:14px;left:14px;z-index:1000;background:rgba(8,10,18,0.92);color:#f97316;padding:6px 14px;border-radius:10px;font-weight:800;font-size:12px;border:1px solid rgba(249,115,22,0.4);font-family:'Segoe UI',system-ui,sans-serif;letter-spacing:.3px;display:none;box-shadow:0 4px 14px rgba(0,0,0,.5)}
     @keyframes pulse{0%{transform:scale(1);opacity:.5}70%{transform:scale(2.5);opacity:0}100%{transform:scale(1);opacity:0}}
     @keyframes ripple{0%{transform:scale(.7);opacity:.8}100%{transform:scale(2.6);opacity:0}}
+    .car-marker { transition: transform 0.08s linear !important; margin-left: -22px !important; margin-top: -22px !important; }
   </style>
 </head>
 <body><div id="map"></div><div id="dateLabel" class="dateBadge"></div>
@@ -709,19 +655,100 @@ L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {maxZoom:20}).
 var routeLine = L.polyline([], {color:'#22c55e', weight:5, opacity:.9}).addTo(map);
 var arrowDec = null, startM = null, endM = null, carM = null;
 
+var animData = [];
+var animPlaying = false;
+var animSpeed = 1;
+var animStartReal = 0;
+var animElapsedVirtual = 0;
+var animTimer = null;
+var lastSyncSec = -1;
+var followMode = false;
+
+function lerp(a, b, f) { return a + (b - a) * f; }
+
+function animFrame(now) {
+   if (!animPlaying || animData.length < 2) return;
+   var elapsed = animElapsedVirtual + (now - animStartReal) * animSpeed;
+   
+   var lo = 0, hi = animData.length - 2;
+   while (lo < hi) {
+     var mid = (lo + hi + 1) >> 1;
+     if (animData[mid].ms <= elapsed) lo = mid; else hi = mid - 1;
+   }
+   var idx = lo;
+   
+   var p1 = animData[idx];
+   var p2 = animData[idx + 1];
+   var t1 = p1.ms;
+   var t2 = p2.ms;
+   var frac = t2 > t1 ? Math.max(0, Math.min(1, (elapsed - t1) / (t2 - t1))) : 0;
+   
+   var lat = lerp(p1.lat, p2.lat, frac);
+   var lng = lerp(p1.lng, p2.lng, frac);
+   var spd = lerp(p1.spd, p2.spd, frac);
+   var crs = lerp(p1.crs, p2.crs, frac);
+   var mlg = lerp(p1.mlg, p2.mlg, frac);
+   var fixMs = p1.fixMs + (p2.fixMs - p1.fixMs) * frac;
+   
+   if (carM) {
+      carM.setLatLng([lat, lng]);
+      var el = carM.getElement();
+      if (el) {
+         var moving = spd > 2;
+         var bg = moving ? '#f97316' : '#64748b';
+         var rw = el.querySelector('.car-rotate');
+         if (rw) { rw.style.transform = 'rotate(' + Math.round(crs) + 'deg)'; rw.style.background = bg; }
+         var pulses = el.querySelectorAll('.pulse-ring');
+         if (moving && pulses.length === 0) {
+            var ring1 = document.createElement('div');
+            ring1.className = 'pulse-ring';
+            ring1.style.cssText = 'position:absolute;width:44px;height:44px;border-radius:50%;background:rgba(249,115,22,0.18);animation:pulse 1.5s ease-out infinite';
+            var ring2 = document.createElement('div');
+            ring2.className = 'pulse-ring';
+            ring2.style.cssText = 'position:absolute;width:30px;height:30px;border-radius:50%;background:rgba(249,115,22,0.1);animation:ripple 2s linear infinite .5s';
+            if (rw) { el.firstChild.insertBefore(ring1, rw); el.firstChild.insertBefore(ring2, rw); }
+         } else if (!moving && pulses.length > 0) {
+            pulses.forEach(function(p) { p.remove(); });
+         }
+      }
+      if(followMode){
+        var z = map.getZoom();
+        var tz = Math.max(z,15);
+        if(z!==tz) map.setView([lat,lng],tz,{animate:true,duration:0.4});
+        else map.panTo([lat,lng],{animate:true,duration:0.3,easeLinearity:0.6});
+      }
+   }
+   
+   var currentVirtualSec = Math.floor(fixMs / 1000);
+   if (currentVirtualSec !== lastSyncSec) {
+      lastSyncSec = currentVirtualSec;
+      window.ReactNativeWebView.postMessage(JSON.stringify({
+        type: 'SYNC', idx: idx, elapsed: elapsed,
+        tel: { speed: spd.toFixed(0), course: Math.round(crs), mileage: mlg.toFixed(2), status: spd > 2 ? 'MOVE' : 'STOP', fixMs: fixMs }
+      }));
+   }
+   
+   if (elapsed >= animData[animData.length-1].ms) {
+      animPlaying = false;
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'END', elapsed: elapsed }));
+   } else {
+      animTimer = requestAnimationFrame(animFrame);
+   }
+}
+
 function carIcon(deg, spd) {
   var moving = (spd||0) > 2;
   var bg = moving ? '#f97316' : '#64748b';
   return L.divIcon({
-    className:'', iconSize:[44,44], iconAnchor:[22,22], popupAnchor:[0,-24],
-    html:'<div style="position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center">'
+    className:'car-marker', iconSize:[44,44], iconAnchor:[22,22], popupAnchor:[0,-24],
+    html:'<div style="position:relative;width:44px;height:44px;display:flex;align-items:center;justify-content:center;">'
       +(moving
-        ?'<div style="position:absolute;width:44px;height:44px;border-radius:50%;background:rgba(249,115,22,0.18);animation:pulse 1.5s ease-out infinite"></div>'
-         +'<div style="position:absolute;width:30px;height:30px;border-radius:50%;background:rgba(249,115,22,0.1);animation:ripple 2s linear infinite .5s"></div>'
+        ?'<div class="pulse-ring" style="position:absolute;width:44px;height:44px;border-radius:50%;background:rgba(249,115,22,0.18);animation:pulse 1.5s ease-out infinite"></div>'
+         +'<div class="pulse-ring" style="position:absolute;width:30px;height:30px;border-radius:50%;background:rgba(249,115,22,0.1);animation:ripple 2s linear infinite .5s"></div>'
         :'')
-      +'<div style="width:34px;height:34px;background:'+bg+';border:3px solid #fff;border-radius:50%;'
+      +'<div class="car-rotate" style="width:34px;height:34px;background:'+bg+';border:3px solid #fff;border-radius:50%;'
       +'box-shadow:0 4px 12px rgba(0,0,0,.65);display:flex;align-items:center;justify-content:center;'
-      +'z-index:2;transform:rotate('+(deg||0)+'deg)">'
+      +'z-index:2;transform:rotate('+(deg||0)+'deg);transition: transform 0.2s linear;">'
       +'<div style="width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;'
       +'border-bottom:12px solid #fff;margin-top:-3px"></div>'
       +'</div></div>'
@@ -742,30 +769,10 @@ function stopIcon() {
   });
 }
 
-function statusHtml(s) {
-  if (!s || s==='—') return '<span class="val">—</span>';
-  var u=s.toUpperCase();
-  if(u==='MOVE'||u==='MOVING') return '<span class="stmove">▶ MOVE</span>';
-  if(u==='STOP'||u==='STOPPED') return '<span class="ststop">■ STOP</span>';
-  if(u==='IDLE') return '<span class="stidle">◉ IDLE</span>';
-  return '<span class="val">'+s+'</span>';
-}
-
-function buildPopup(t) {
-  return '<div class="lpc">'
-    +'<div class="hdr">🛰 Live Telemetry</div>'
-    +'<div class="row"><span class="lbl">Status</span>'+statusHtml(t.status)+'</div>'
-    +'<div class="row"><span class="lbl">GPS Time</span><span class="val tm">'+(t.time||'—')+'</span></div>'
-    +'<div class="row"><span class="lbl">Speed</span><span class="spd">'+(t.speed||0)+'<span class="spdu"> kph</span></span></div>'
-    +'<div class="row"><span class="lbl">Course</span><span class="val crs">'+(t.course||0)+'° '+(t.courseDir||'')+'</span></div>'
-    +'<div class="row"><span class="lbl">Mileage</span><span class="val mlg">'+(t.mileage||'0.00')+' km</span></div>'
-    +(t.address?'<div class="addr">📍 '+t.address+'</div>':'')
-    +'</div>';
-}
-
 window.dispatchPlayback = function(s) {
   var d = JSON.parse(s);
   if (d.type === 'CLEAR_ALL') {
+    animPlaying = false; if (animTimer) cancelAnimationFrame(animTimer); animData = [];
     routeLine.setLatLngs([]);
     if(arrowDec){map.removeLayer(arrowDec);arrowDec=null;}
     if(startM){map.removeLayer(startM);startM=null;}
@@ -782,13 +789,12 @@ window.dispatchPlayback = function(s) {
     if(startM){map.removeLayer(startM);startM=null;}
     if(endM){map.removeLayer(endM);endM=null;}
     if(carM){map.removeLayer(carM);carM=null;}
-    // Always clear previous stop markers before drawing a new route — prevents
-    // duplicate markers and memory leaks across repeated loads.
     if(window.stopMarkers) { window.stopMarkers.forEach(function(m){map.removeLayer(m);}); }
     window.stopMarkers = [];
 
     if(!d.coords||d.coords.length<2) return;
-    routeLine.setLatLngs(d.coords);
+    animData = d.coords;
+    routeLine.setLatLngs(d.coords.map(c=>[c.lat,c.lng]));
 
     if(window.L.polylineDecorator){
       arrowDec = L.polylineDecorator(routeLine,{
@@ -799,18 +805,11 @@ window.dispatchPlayback = function(s) {
       }).addTo(map);
     }
 
-    startM = L.marker(d.coords[0], {icon:pinIcon('S','#22c55e'),zIndexOffset:500}).addTo(map);
-    endM   = L.marker(d.coords[d.coords.length-1], {icon:pinIcon('P','#ef4444'),zIndexOffset:500}).addTo(map);
+    startM = L.marker([d.coords[0].lat, d.coords[0].lng], {icon:pinIcon('S','#22c55e'),zIndexOffset:500}).addTo(map);
+    endM   = L.marker([d.coords[d.coords.length-1].lat, d.coords[d.coords.length-1].lng], {icon:pinIcon('P','#ef4444'),zIndexOffset:500}).addTo(map);
 
-    // Bind initial popups (address will be updated later via SET_MARKER_INFO)
-    var sTime = d.startTime || '';
-    var eTime = d.endTime || '';
-    startM.bindPopup('<div class="mk-popup"><div class="mk-title start">▶ Start Point</div>'
-      +'<div class="mk-row"><span class="mk-lbl">Time</span><span class="mk-val">'+(sTime||'Loading...')+'</span></div>'
-      +'<div class="mk-addr">📍 Loading address...</div></div>', {className:'lpw',closeButton:true,autoPan:true,offset:[0,-8]});
-    endM.bindPopup('<div class="mk-popup"><div class="mk-title end">⏹ End Point</div>'
-      +'<div class="mk-row"><span class="mk-lbl">Time</span><span class="mk-val">'+(eTime||'Loading...')+'</span></div>'
-      +'<div class="mk-addr">📍 Loading address...</div></div>', {className:'lpw',closeButton:true,autoPan:true,offset:[0,-8]});
+    startM.bindPopup('<div class="mk-popup"><div class="mk-title start">▶ Start Point</div><div class="mk-addr">Loading...</div></div>', {className:'lpw',closeButton:true,autoPan:true,offset:[0,-8]});
+    endM.bindPopup('<div class="mk-popup"><div class="mk-title end">⏹ End Point</div><div class="mk-addr">Loading...</div></div>', {className:'lpw',closeButton:true,autoPan:true,offset:[0,-8]});
 
     if (d.stops && d.stops.length > 0) {
       d.stops.forEach(function(st, idx) {
@@ -825,7 +824,7 @@ window.dispatchPlayback = function(s) {
       });
     }
 
-    carM = L.marker(d.coords[0], {icon:carIcon(0,0),zIndexOffset:1000}).addTo(map);
+    carM = L.marker([d.coords[0].lat, d.coords[0].lng], {icon:carIcon(0,0),zIndexOffset:1000}).addTo(map);
 
     var dl = document.getElementById('dateLabel');
     if (d.selectedDate) {
@@ -838,20 +837,27 @@ window.dispatchPlayback = function(s) {
     map.fitBounds(routeLine.getBounds(),{padding:[65,65],animate:true,duration:1.0});
     return;
   }
-  if (d.type === 'UPDATE_CAR' && carM && d.coord) {
-    carM.setLatLng(d.coord);
-    carM.setIcon(carIcon(d.course||0, d.speed||0));
-
-    if(d.follow){
-      var z = map.getZoom();
-      var tz = Math.max(z,15);
-      if(z!==tz){
-        map.setView(d.coord,tz,{animate:true,duration:0.4});
-      } else {
-        map.panTo(d.coord,{animate:true,duration:0.3,easeLinearity:0.6});
-      }
-    }
-    return;
+  if (d.type === 'PLAY') {
+     animSpeed = d.speed;
+     animElapsedVirtual = d.elapsed;
+     followMode = d.follow;
+     animPlaying = true;
+     animStartReal = performance.now();
+     if (animTimer) cancelAnimationFrame(animTimer);
+     animTimer = requestAnimationFrame(animFrame);
+  } else if (d.type === 'PAUSE') {
+     animPlaying = false;
+     if (animTimer) cancelAnimationFrame(animTimer);
+  } else if (d.type === 'SEEK') {
+     animElapsedVirtual = d.elapsed;
+     animStartReal = performance.now();
+     if (!animPlaying) {
+        animPlaying = true;
+        animFrame(performance.now());
+        animPlaying = false;
+     }
+  } else if (d.type === 'UPDATE_FOLLOW') {
+     followMode = d.follow;
   }
   if (d.type === 'SET_MARKER_INFO') {
     if (startM) {
@@ -874,7 +880,7 @@ setTimeout(function(){
   window.ReactNativeWebView.postMessage(JSON.stringify({type:'MAP_READY'}));
 },400);
 </script></body></html>
-  `, []);
+  `, [selectedDateStr]);
 
   return (
     <View style={s.container}>
@@ -1029,22 +1035,6 @@ setTimeout(function(){
             <Text style={s.hudStat}><Text style={{ color: '#60a5fa' }}>{liveTel.mileage}</Text>/{totalKm} km</Text>
           </View>
 
-          {/* Total Moving Time / Total Stop Time for the whole selected day */}
-          {/*
-          <View style={s.hudSummaryRow}>
-            <View style={[s.summaryPill, { borderColor: 'rgba(74,222,128,0.4)', backgroundColor: 'rgba(74,222,128,0.10)' }]}>
-              <Icon name="speedometer" size={11} color="#4ade80" />
-              <Text style={s.summaryLbl}>Total Move</Text>
-              <Text style={[s.summaryVal, { color: '#4ade80' }]}>{fmtDuration(timeSplit.moveMs)}</Text>
-            </View>
-            <View style={[s.summaryPill, { borderColor: 'rgba(249,115,22,0.4)', backgroundColor: 'rgba(249,115,22,0.10)' }]}>
-              <Icon name="stop-circle-outline" size={11} color="#f97316" />
-              <Text style={s.summaryLbl}>Total Stop</Text>
-              <Text style={[s.summaryVal, { color: '#f97316' }]}>{fmtDuration(timeSplit.stopMs)}</Text>
-            </View> 
-          </View>
-          */}
-
           {/* Progress bar */}
           <View style={s.progWrap}>
             <View
@@ -1055,7 +1045,6 @@ setTimeout(function(){
               onResponderGrant={e => {
                 setIsPlaying(false);
                 setIsScrubbing(true);
-                if (animationRef.current) cancelAnimationFrame(animationRef.current);
                 const barW = progBarLayoutRef.current.width || BAR_WIDTH;
                 const ratio = Math.max(0, Math.min(1, e.nativeEvent.locationX / barW));
                 setScrubRatio(ratio);
@@ -1101,53 +1090,51 @@ setTimeout(function(){
             </View>
           </View>
 
-          {/* Controls — compact single row */}
-          <View style={s.controls}>
-            <TouchableOpacity style={s.ctrlBtn} onPress={() => {
-              setIsPlaying(false);
-              if (animationRef.current) cancelAnimationFrame(animationRef.current);
-              seekTo(0);
-            }}>
-              <Icon name="skip-backward" size={16} color="#94a3b8" />
-            </TouchableOpacity>
+          {/* Controls & Speed */}
+          <View style={s.playbackBar}>
+            <View style={s.controls}>
+              <Pressable style={({pressed}) => [s.playBtnOutline, { marginRight: 10, backgroundColor: pressed ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)' }]} onPress={() => {
+                setIsPlaying(false);
+                seekTo(Math.max(0, currentIndex - 1));
+              }}>
+                <Icon name="skip-previous" size={24} color="#6b7a90" />
+              </Pressable>
 
-            <TouchableOpacity style={s.ctrlBtn} onPress={() => {
-              setIsPlaying(false);
-              if (animationRef.current) cancelAnimationFrame(animationRef.current);
-              seekTo(Math.max(0, currentIndex - 1));
-            }}>
-              <Icon name="step-backward" size={14} color="#94a3b8" />
-            </TouchableOpacity>
+              <Pressable style={({pressed}) => [s.playBtn, pressed && { backgroundColor: '#c2410c', transform: [{scale: 0.95}] }]} onPress={() => {
+                  if (routePoints.length === 0) return;
+                  if (!isPlaying && currentIndex >= routePoints.length - 1) {
+                    seekTo(0);
+                    setTimeout(() => setIsPlaying(true), 60);
+                  } else {
+                    setIsPlaying(p => !p);
+                  }
+                }}>
+                <Icon name={isPlaying ? 'pause' : 'play'} size={24} color="#fff" />
+              </Pressable>
 
-            <TouchableOpacity
-              style={s.playBtn}
-              onPress={() => {
-                if (routePoints.length === 0) return;
-                if (!isPlaying && currentIndex >= routePoints.length - 1) {
-                  seekTo(0);
-                  setTimeout(() => setIsPlaying(true), 60);
-                } else {
-                  setIsPlaying(p => !p);
-                }
-              }}
-            >
-              <Icon name={isPlaying ? 'pause' : 'play'} size={22} color="#fff" />
-            </TouchableOpacity>
+              <Pressable onPress={() => {
+                  setIsPlaying(false);
+                  if (animationRef.current) cancelAnimationFrame(animationRef.current);
+                  seekTo(Math.min(routePoints.length - 1, currentIndex + 1));
+              }} style={({pressed}) => [s.playBtnOutline, { marginLeft: 10, backgroundColor: pressed ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)' }]}>
+                <Icon name="skip-next" size={24} color="#6b7a90" />
+              </Pressable>
+            </View>
 
-            <TouchableOpacity style={s.ctrlBtn} onPress={() => {
-              setIsPlaying(false);
-              if (animationRef.current) cancelAnimationFrame(animationRef.current);
-              seekTo(Math.min(routePoints.length - 1, currentIndex + 1));
-            }}>
-              <Icon name="step-forward" size={14} color="#94a3b8" />
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={s.speedBtn}
-              onPress={() => setPlaySpeed(sp => SPEEDS[(SPEEDS.indexOf(sp) + 1) % SPEEDS.length])}
-            >
-              <Text style={s.speedTxt}>×{playSpeed}</Text>
-            </TouchableOpacity>
+            <View style={{ marginTop: 8 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.speedCtrl}>
+                <Text style={s.speedLbl}>SPEED</Text>
+                {[0.25, 0.5, 1, 2, 5, 10, 20].map(sVal => (
+                  <TouchableOpacity
+                    key={sVal}
+                    style={[s.spdBtn, playSpeed === sVal && s.spdBtnActive]}
+                    onPress={() => setPlaySpeed(sVal)}
+                  >
+                    <Text style={[s.spdBtnTxt, playSpeed === sVal && s.spdBtnTxtActive]}>{sVal}x</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
           </View>
 
           {/* Address */}
@@ -1239,14 +1226,14 @@ const s = StyleSheet.create({
   statusTxt: { fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
   hudGpsTime: { fontSize: 9, color: '#64748b', fontWeight: '600', marginRight: 4 },
   hudStat: { fontSize: 9, color: '#475569', fontWeight: '600', marginLeft: 4 },
-  hudSummaryRow: { flexDirection: 'row', gap: 8, marginBottom: 4 },
+  hudSummaryRow: { flexDirection: 'row', gap: 8, marginBottom: 8, marginTop: 4 },
   summaryPill: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 9, paddingVertical: 4,
-    borderRadius: 10, borderWidth: 1, flex: 1, justifyContent: 'center',
+    flex: 1, alignItems: 'center', backgroundColor: '#1a2030',
+    paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: '#2d3748',
   },
-  summaryLbl: { fontSize: 9, color: '#94a3b8', fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.3 },
-  summaryVal: { fontSize: 11, fontWeight: '900' },
+  summaryVal: { fontSize: 14, fontWeight: '800', color: '#f8fafc' },
+  summaryLbl: { fontSize: 9, color: '#94a3b8', marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.5 },
+
   progWrap: { marginBottom: 2 },
   progBg: {
     height: 22, backgroundColor: 'transparent', borderRadius: 4,
@@ -1267,27 +1254,42 @@ const s = StyleSheet.create({
   },
   timeRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
   timeTxt: { fontSize: 9, color: '#374151', fontWeight: '600' },
-  controls: {
-    flexDirection: 'row', justifyContent: 'center',
-    alignItems: 'center', gap: 10, marginBottom: 2, marginTop: 2,
+  playbackBar: {
+    flexDirection: 'column', gap: 6, marginTop: 4, marginBottom: 6
   },
-  ctrlBtn: {
-    width: 30, height: 30, borderRadius: 15,
-    backgroundColor: '#0d1117', justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1, borderColor: '#1e2533',
+  controls: {
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 16,
+  },
+  playBtnOutline: {
+    width: 42, height: 42, borderRadius: 21,
+    borderWidth: 2, borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.1)',
+    justifyContent: 'center', alignItems: 'center',
   },
   playBtn: {
-    width: 38, height: 38, borderRadius: 19,
+    width: 48, height: 48, borderRadius: 24,
     backgroundColor: '#f97316', justifyContent: 'center', alignItems: 'center',
     elevation: 8, shadowColor: '#f97316',
     shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.5, shadowRadius: 8,
   },
-  speedBtn: {
-    width: 36, height: 28, borderRadius: 8,
-    backgroundColor: '#0d1117', justifyContent: 'center', alignItems: 'center',
-    borderWidth: 1.5, borderColor: '#f97316',
+  speedCtrl: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 4,
   },
-  speedTxt: { fontSize: 10, fontWeight: '900', color: '#f97316' },
+  speedLbl: {
+    fontSize: 9, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5, marginRight: 4, fontWeight: '700'
+  },
+  spdBtn: {
+    paddingVertical: 5, paddingHorizontal: 10, borderRadius: 6,
+    backgroundColor: '#1a2030', borderWidth: 1, borderColor: '#2d3748',
+  },
+  spdBtnActive: {
+    backgroundColor: 'rgba(249,115,22,0.15)', borderColor: '#f97316',
+  },
+  spdBtnTxt: {
+    fontSize: 11, fontWeight: '600', color: '#94a3b8'
+  },
+  spdBtnTxtActive: {
+    color: '#f97316'
+  },
   addrBox: {
     paddingVertical: 2, paddingHorizontal: 4,
     marginBottom: 2, alignItems: 'center'

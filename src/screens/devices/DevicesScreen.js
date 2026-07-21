@@ -19,7 +19,7 @@ import { fetchDeviceList, loginApi } from '../../api/webApi';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const DevicesScreen = ({ navigation }) => {
+const DevicesScreen = ({ navigation, route }) => {
   const { userToken, isLoading } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
 
@@ -122,8 +122,23 @@ const DevicesScreen = ({ navigation }) => {
         (d.iccid || d.uniqueId || '').toLowerCase().includes(q)
       );
     }
+
+    // Apply voltage filter if navigated from dashboard pie chart
+    const voltageFilter = route?.params?.voltageFilter;
+    if (voltageFilter) {
+      list = list.filter(d => {
+        let v = parseFloat(d.adc1 || "0");
+        if (isNaN(v)) v = 0;
+        
+        if (voltageFilter === 'Danger') return v < 9.5;
+        if (voltageFilter === 'Critical') return v >= 9.5 && v < 10.0;
+        if (voltageFilter === 'Normal') return v >= 10.0;
+        return true;
+      });
+    }
+
     return list;
-  }, [allDevices, activeTab, searchQuery]);
+  }, [allDevices, activeTab, searchQuery, route?.params?.voltageFilter]);
 
   // Reset pagination when filters or search changes
   useEffect(() => {
@@ -135,7 +150,13 @@ const DevicesScreen = ({ navigation }) => {
     return (
       <TouchableOpacity
         style={[styles.tab, isActive && styles.activeTab]}
-        onPress={() => setActiveTab(title)}
+        onPress={() => {
+          // If changing main tabs, clear the voltage filter so we see the proper list
+          if (route?.params?.voltageFilter) {
+            navigation.setParams({ voltageFilter: null });
+          }
+          setActiveTab(title);
+        }}
         activeOpacity={0.7}
       >
         <Text style={[styles.tabText, isActive && styles.activeTabText]}>
@@ -151,6 +172,14 @@ const DevicesScreen = ({ navigation }) => {
       <Header
         title="DG Status"
         navigation={navigation}
+        showBack={true}
+        onBackPress={() => {
+          if (navigation.canGoBack()) {
+            navigation.goBack();
+          } else {
+            navigation.navigate('DashboardTab');
+          }
+        }}
         rightAction={
           <TouchableOpacity onPress={() => setShowSearch(!showSearch)} style={{ padding: 8 }}>
             <Icon name="magnify" size={24} color="#FFFFFF" />
@@ -164,6 +193,22 @@ const DevicesScreen = ({ navigation }) => {
         {renderTab('Online', onlineCount)}
         {renderTab('Offline', offlineCount)}
       </View>
+
+      {route?.params?.voltageFilter && (
+        <View style={{ paddingHorizontal: 16, paddingBottom: 8, flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={{ fontSize: 13, color: '#64748b', marginRight: 8 }}>
+            Filtered by Voltage: <Text style={{ fontWeight: '700', color: '#1e3a8a' }}>
+              {route.params.voltageFilter}
+              {route.params.voltageFilter === 'Danger' ? ' (< 9.5V)' : ''}
+              {route.params.voltageFilter === 'Critical' ? ' (9.5V - 9.99V)' : ''}
+              {route.params.voltageFilter === 'Normal' ? ' (>= 10V)' : ''}
+            </Text>
+          </Text>
+          <TouchableOpacity onPress={() => navigation.setParams({ voltageFilter: null })}>
+            <Text style={{ color: '#ef4444', fontSize: 12, fontWeight: 'bold' }}>CLEAR</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Search Bar */}
       {showSearch && (

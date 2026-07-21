@@ -524,10 +524,10 @@ const styles = StyleSheet.create({
   content:       { padding: 16 },
   card:          { backgroundColor: '#FFFFFF', padding: 16, borderRadius: 12, elevation: 3, marginBottom: 20 },
   label:         { fontSize: 13, fontWeight: 'bold', color: '#757575', marginBottom: 8, marginTop: 14 },
-  typePicker:    { flexDirection: 'row' },
+  typePicker:    { flexDirection: 'row', flexWrap: 'wrap' },
   typeBtn: {
-    flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1,
-    borderColor: '#E0E0E0', marginRight: 6, alignItems: 'center',
+    paddingHorizontal: 10, paddingVertical: 10, borderRadius: 8, borderWidth: 1,
+    borderColor: '#E0E0E0', marginRight: 6, marginBottom: 8, alignItems: 'center',
   },
   typeBtnActive: { backgroundColor: '#1565C0', borderColor: '#1565C0' },
   typeBtnText:   { color: '#757575', fontWeight: 'bold', fontSize: 13 },

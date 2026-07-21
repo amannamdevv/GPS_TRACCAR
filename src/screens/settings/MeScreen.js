@@ -30,6 +30,7 @@ const MeScreen = ({ navigation }) => {
       title: 'Activity & Reporting',
       items: [
         { name: 'DG Logs', icon: 'chart-bar', color: '#10b981', route: 'DgStatusLog', desc: 'Detailed DG status and logs' },
+        { name: 'DG By Site', icon: 'map-marker-radius', color: '#ea580c', route: 'DgBySiteScreen', desc: 'View towers around a device' },
         // { name: 'DG Alarm Dashboard', icon: 'bell-alert-outline', color: '#ef4444', route: 'AlarmDashboard', desc: 'DG industrial alarm tracking' },
       ]
     },

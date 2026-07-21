@@ -23,6 +23,7 @@ import DashboardScreen from '../screens/dashboard/DashboardScreen';
 import ReportsScreen from '../screens/reports/ReportsScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import AlarmDashboardScreen from '../screens/alarms/AlarmDashboardScreen';
+import DgBySiteScreen from '../screens/reports/DgBySiteScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -83,6 +84,7 @@ const MeStack = () => (
     <Stack.Screen name="Tracking" component={TrackingScreen} />
     <Stack.Screen name="Playback" component={PlaybackScreen} />
     <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
+    <Stack.Screen name="DgBySiteScreen" component={DgBySiteScreen} />
   </Stack.Navigator>
 );
 

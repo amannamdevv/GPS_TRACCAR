@@ -91,11 +91,11 @@ const Top10BarChart = ({ data }) => {
     let _values = [];
     let _strings = [];
     let _fullNames = [];
-    
+
     activeData.forEach(item => {
       let valNum = 0;
       let str = '';
-      
+
       let name = item.dg_name || item.device_name || 'Unknown';
       _fullNames.push(name);
       _labels.push(name.length > 5 ? name.substring(0, 5) + '..' : name);
@@ -110,7 +110,7 @@ const Top10BarChart = ({ data }) => {
         valNum = parseDurationString(item.total_dg_idle);
         str = formatDurationHumanReadable(valNum);
       }
-      
+
       _values.push(valNum);
       _strings.push(str);
     });
@@ -121,7 +121,7 @@ const Top10BarChart = ({ data }) => {
   const maxValue = Math.max(...values, 0);
   const niceMax = maxValue === 0 ? 10 : Math.ceil(maxValue * 1.2);
   const dynamicSegments = 4;
-  
+
   const handleModeChange = (mode) => {
     setBarChartMode(mode);
     setTooltipPos({ index: null, x: 0 });
@@ -149,97 +149,97 @@ const Top10BarChart = ({ data }) => {
       </View>
 
       {values.length === 0 && (
-         <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-             <Text style={{ color: '#94a3b8' }}>No data available for the last 7 days</Text>
-         </View>
+        <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+          <Text style={{ color: '#94a3b8' }}>No data available for the last 7 days</Text>
+        </View>
       )}
 
       {values.length > 0 && (
-      <View style={{ marginTop: 14, flexDirection: 'row' }}>
-        <View style={{ width: 45, height: 210, backgroundColor: '#fff', zIndex: 10 }}>
-          <Svg width={45} height={210}>
-            {Array.from({ length: dynamicSegments + 1 }).map((_, i) => {
-              const val = niceMax - i * (niceMax / dynamicSegments);
-              const y = 20 + i * (160 / dynamicSegments);
-              return (
-                <SvgText key={`y-`+i} x={35} y={y + 4} fontSize="11" fill="#64748b" textAnchor="end" fontWeight="bold">
-                  {val >= 1000 ? `${(val / 1000).toFixed(0)}k` : Math.round(val)}
-                </SvgText>
-              );
-            })}
-          </Svg>
-        </View>
-
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
-          <View style={{ position: 'relative', width: scrollableWidth, height: 210 }}>
-            <Svg width={scrollableWidth} height={210}>
+        <View style={{ marginTop: 14, flexDirection: 'row' }}>
+          <View style={{ width: 45, height: 210, backgroundColor: '#fff', zIndex: 10 }}>
+            <Svg width={45} height={210}>
               {Array.from({ length: dynamicSegments + 1 }).map((_, i) => {
+                const val = niceMax - i * (niceMax / dynamicSegments);
                 const y = 20 + i * (160 / dynamicSegments);
                 return (
-                  <Line key={`grid-`+i} x1={0} y1={y} x2={scrollableWidth - 15} y2={y} stroke="#eef2f7" strokeWidth="1" strokeDasharray="4, 6" />
-                );
-              })}
-              <Line x1={0} y1={20} x2={0} y2={180} stroke="#cbd5e1" strokeWidth="1" />
-              <Line x1={scrollableWidth - 15} y1={20} x2={scrollableWidth - 15} y2={180} stroke="#cbd5e1" strokeWidth="1" />
-
-              {values.map((numVal, i) => {
-                const barH = niceMax > 0 ? (numVal / niceMax) * 160 : 0;
-                const usableWidth = scrollableWidth - 15;
-                const barSpacing = values.length > 0 ? usableWidth / values.length : usableWidth;
-                const maxBarWidth = 40;
-                const barWidth = Math.min(barSpacing * 0.55, maxBarWidth);
-                const x = (i * barSpacing) + (barSpacing - barWidth) / 2;
-                const y = 180 - barH;
-                const barColor = barChartMode === 'distance' ? '#3b82f6' : barChartMode === 'onTime' ? '#10b981' : '#f59e0b';
-                
-                const isAnySelected = tooltipPos.index !== null;
-                const isSelected = tooltipPos.index === i;
-                const barOpacity = isAnySelected ? (isSelected ? 1 : 0.3) : 1;
-
-                return (
-                  <G 
-                    key={`bar-`+i}
-                    onPress={() => {
-                      if (tooltipPos.index === i) {
-                        setTooltipPos({ index: null, x: 0 });
-                      } else {
-                        let tipX = x + barWidth / 2 - 35; 
-                        if (tipX < 0) tipX = 0;
-                        if (tipX > scrollableWidth - 75) tipX = scrollableWidth - 75;
-                        setTooltipPos({ index: i, x: tipX });
-                      }
-                    }}
-                  >
-                    <Rect x={x} y={y} width={barWidth} height={barH} fill={barColor} opacity={barOpacity} rx="4" />
-                    <SvgText x={(i * barSpacing) + barSpacing / 2} y={198} fontSize="11" fill="#64748b" textAnchor="middle" fontWeight="bold">
-                      {labels[i]}
-                    </SvgText>
-                    {/* Invisible hit area for easier tapping */}
-                    <Rect x={i * barSpacing} y={0} width={barSpacing} height={210} fill="transparent" />
-                  </G>
+                  <SvgText key={`y-` + i} x={35} y={y + 4} fontSize="11" fill="#64748b" textAnchor="end" fontWeight="bold">
+                    {val >= 1000 ? `${(val / 1000).toFixed(0)}k` : Math.round(val)}
+                  </SvgText>
                 );
               })}
             </Svg>
-
-            {tooltipPos.index !== null ? (
-              <View style={{
-                position: 'absolute', top: 10, left: tooltipPos.x,
-                backgroundColor: '#1e293b', paddingHorizontal: 6, paddingVertical: 6,
-                borderRadius: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-                shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5,
-                minWidth: 70, alignItems: 'center', zIndex: 100
-              }}>
-                <Text style={{ color: '#94a3b8', fontSize: 9, textAlign: 'center', marginBottom: 2 }}>
-                  {fullNames[tooltipPos.index]}
-                </Text>
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold', textAlign: 'center' }}>
-                  {displayStrings[tooltipPos.index]}
-                </Text>
-              </View>
-            ) : null}
           </View>
-        </ScrollView>
-      </View>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+            <View style={{ position: 'relative', width: scrollableWidth, height: 210 }}>
+              <Svg width={scrollableWidth} height={210}>
+                {Array.from({ length: dynamicSegments + 1 }).map((_, i) => {
+                  const y = 20 + i * (160 / dynamicSegments);
+                  return (
+                    <Line key={`grid-` + i} x1={0} y1={y} x2={scrollableWidth - 15} y2={y} stroke="#eef2f7" strokeWidth="1" strokeDasharray="4, 6" />
+                  );
+                })}
+                <Line x1={0} y1={20} x2={0} y2={180} stroke="#cbd5e1" strokeWidth="1" />
+                <Line x1={scrollableWidth - 15} y1={20} x2={scrollableWidth - 15} y2={180} stroke="#cbd5e1" strokeWidth="1" />
+
+                {values.map((numVal, i) => {
+                  const barH = niceMax > 0 ? (numVal / niceMax) * 160 : 0;
+                  const usableWidth = scrollableWidth - 15;
+                  const barSpacing = values.length > 0 ? usableWidth / values.length : usableWidth;
+                  const maxBarWidth = 40;
+                  const barWidth = Math.min(barSpacing * 0.55, maxBarWidth);
+                  const x = (i * barSpacing) + (barSpacing - barWidth) / 2;
+                  const y = 180 - barH;
+                  const barColor = barChartMode === 'distance' ? '#3b82f6' : barChartMode === 'onTime' ? '#10b981' : '#f59e0b';
+
+                  const isAnySelected = tooltipPos.index !== null;
+                  const isSelected = tooltipPos.index === i;
+                  const barOpacity = isAnySelected ? (isSelected ? 1 : 0.3) : 1;
+
+                  return (
+                    <G
+                      key={`bar-` + i}
+                      onPress={() => {
+                        if (tooltipPos.index === i) {
+                          setTooltipPos({ index: null, x: 0 });
+                        } else {
+                          let tipX = x + barWidth / 2 - 35;
+                          if (tipX < 0) tipX = 0;
+                          if (tipX > scrollableWidth - 75) tipX = scrollableWidth - 75;
+                          setTooltipPos({ index: i, x: tipX });
+                        }
+                      }}
+                    >
+                      <Rect x={x} y={y} width={barWidth} height={barH} fill={barColor} opacity={barOpacity} rx="4" />
+                      <SvgText x={(i * barSpacing) + barSpacing / 2} y={198} fontSize="11" fill="#64748b" textAnchor="middle" fontWeight="bold">
+                        {labels[i]}
+                      </SvgText>
+                      {/* Invisible hit area for easier tapping */}
+                      <Rect x={i * barSpacing} y={0} width={barSpacing} height={210} fill="transparent" />
+                    </G>
+                  );
+                })}
+              </Svg>
+
+              {tooltipPos.index !== null ? (
+                <View style={{
+                  position: 'absolute', top: 10, left: tooltipPos.x,
+                  backgroundColor: '#1e293b', paddingHorizontal: 6, paddingVertical: 6,
+                  borderRadius: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+                  shadowOpacity: 0.25, shadowRadius: 3.84, elevation: 5,
+                  minWidth: 70, alignItems: 'center', zIndex: 100
+                }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 9, textAlign: 'center', marginBottom: 2 }}>
+                    {fullNames[tooltipPos.index]}
+                  </Text>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold', textAlign: 'center' }}>
+                    {displayStrings[tooltipPos.index]}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          </ScrollView>
+        </View>
       )}
     </View>
   );
@@ -426,6 +426,8 @@ const DashboardScreen = ({ navigation }) => {
 
   // Live timer (updated on screen focus and every second)
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [voltageStats, setVoltageStats] = useState({ normal: 0, critical: 0, danger: 0, offline: 0, total: 0 });
+
   // Update the time every second
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -446,10 +448,22 @@ const DashboardScreen = ({ navigation }) => {
         fetchFilterDropdowns(),
         fetchDgDashboardTop10({ start_date: startDate, end_date: endDate }),
       ]);
-      setDevices(deviceResp.devices || []);
+      const devicesArr = deviceResp.devices || [];
+      setDevices(devicesArr);
       setDgDashboardData(dgResp || null);
       setDgDashboardTop10Data(top10Resp || null);
       setDropdowns(ddResp);
+
+      let normal = 0, critical = 0, danger = 0;
+      devicesArr.forEach(item => {
+        let voltage = parseFloat(item.adc1 || "0");
+        if (isNaN(voltage)) voltage = 0;
+
+        if (voltage < 9.5) danger++;
+        else if (voltage >= 9.5 && voltage < 10.0) critical++;
+        else if (voltage >= 10.0) normal++;
+      });
+      setVoltageStats({ normal, critical, danger, total: devicesArr.length });
     } catch (err) {
       setError(err.message || 'Failed to sync dashboard data');
     } finally {
@@ -837,17 +851,34 @@ const DashboardScreen = ({ navigation }) => {
 
       {/* ── CHARTS AREA ── */}
       {primaryFilter === 'all' && chartTotal > 0 && (
-        <View style={[styles.dualChartCard, { justifyContent: 'center' }]}>
-          <CompactDonut
-            horizontal={true}
-            total={chartTotal}
-            title="DEVICE STATUS"
-            activeFilter={primaryFilter} // Not interactive directly here
-            dataEntries={[
-              { label: 'ONLINE', val: globalMetrics.online, color: '#10b981', filterKey: 'online' },
-              { label: 'OFFLINE', val: globalMetrics.offline, color: '#ef4444', filterKey: 'offline' },
-            ]}
-          />
+        <View style={{ gap: 12 }}>
+          <View style={[styles.dualChartCard, { justifyContent: 'center' }]}>
+            <CompactDonut
+              horizontal={true}
+              total={chartTotal}
+              title="DEVICE STATUS"
+              activeFilter={primaryFilter} // Not interactive directly here
+              dataEntries={[
+                { label: 'ONLINE', val: globalMetrics.online, color: '#10b981', filterKey: 'online' },
+                { label: 'OFFLINE', val: globalMetrics.offline, color: '#ef4444', filterKey: 'offline' },
+              ]}
+            />
+          </View>
+
+          <View style={[styles.dualChartCard, { justifyContent: 'center' }]}>
+            <CompactDonut
+              horizontal={true}
+              total={voltageStats.total}
+              title="Ex. Batt Volt STATUS"
+              activeFilter={null}
+              onFilterSelect={(filterKey) => navigation.navigate('DeviceTab', { screen: 'DevicesList', params: { voltageFilter: filterKey } })}
+              dataEntries={[
+                { label: 'DANGER', val: voltageStats.danger, color: '#ef4444', filterKey: 'Danger' },
+                { label: 'CRITICAL', val: voltageStats.critical, color: '#f59e0b', filterKey: 'Critical' },
+                { label: 'NORMAL', val: voltageStats.normal, color: '#10b981', filterKey: 'Normal' },
+              ]}
+            />
+          </View>
         </View>
       )}
 
@@ -1135,7 +1166,13 @@ const styles = StyleSheet.create({
   chartDivider: {
     width: 1,
     backgroundColor: '#f1f5f9',
-    marginHorizontal: 10,
+    marginHorizontal: 8,
+  },
+  chartDividerHorizontal: {
+    height: 1,
+    backgroundColor: '#f1f5f9',
+    marginVertical: 12,
+    width: '100%'
   },
   compactDonutWrapper: {
     flex: 1,

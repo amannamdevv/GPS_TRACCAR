@@ -434,13 +434,19 @@ export const reverseGeocode = async (lat, lon) => {
         try {
           const response = await axios.get(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latF}&lon=${lonF}&zoom=18&addressdetails=1`,
-            { headers: { 'User-Agent': 'TraccarFleet/1.0' }, timeout: 15000 }
+            { headers: { 'User-Agent': 'TraccarFleet/1.0', 'Accept-Language': 'en' }, timeout: 15000 }
           );
           const displayName = response.data?.display_name;
           if (displayName) {
-            const parts = displayName.split(',').map(s => s.trim()).filter(Boolean);
-            while (parts.length > 0 && /^(India|[0-9]+)$/i.test(parts[parts.length - 1])) parts.pop();
-            const finalAddress = parts.join(', ');
+            const parts = displayName.split(',');
+            const filtered = [];
+            for (let i = 0; i < parts.length; i++) {
+                const p = parts[i].trim();
+                if (p.toLowerCase() !== 'india' && !/^\d+$/.test(p)) {
+                    filtered.push(p);
+                }
+            }
+            const finalAddress = filtered.join(', ');
             addressCache[key] = finalAddress;
             resolve(finalAddress);
             await delay(1100);
@@ -515,7 +521,7 @@ export const loginApi = async (serverUrl, email, password) => {
 export const getTripsReport = async (deviceId, from, to) => {
   try {
     const resp = await webApi.get('/dg_merged_status_api/', {
-      params: { deviceid: deviceId, deviceId, from, to },
+      params: { deviceid: deviceId, start_date: from, end_date: to },
       timeout: 20000,
     });
     const raw = resp.data;
@@ -544,7 +550,6 @@ export const getTripsReport = async (deviceId, from, to) => {
       // Keep all original fields too
       ...t,
     }));
-    // No filter — return all records as-is from API
   } catch (e) {
     console.warn('[getTripsReport]', e.message);
     return [];
@@ -612,21 +617,42 @@ export const fetchDgDeviceDetail = async () => {
   }
 };
 
-// ─── fetchDgDailySummary ───────────────────────────────────────────────────
-export const fetchDgDailySummary = async (deviceId, startDate, endDate, options = {}) => {
+// ─── fetchLiveVoltageStatus ──────────────────────────────────────────────────
+export const fetchLiveVoltageStatus = async (options = {}) => {
   try {
-    const params = {
-      deviceid: deviceId,
-      start_date: startDate,
-      end_date: endDate,
-      from_date: startDate,
-      to_date: endDate,
-    };
-    const resp = await webApi.get('/dg_daily_summary_api/', { params, ...options });
+    const resp = await webApi.get('/dg_device_voltage_api/', options);
     return resp.data;
   } catch (e) {
-    console.warn('[fetchDgDailySummary]', e.message);
-    return null;
+    console.warn('[fetchLiveVoltageStatus]', e.message);
+    throw e;
+  }
+};
+
+// ─── fetchDgBySiteReport ─────────────────────────────────────────────────────
+export const fetchDgBySiteReport = async (params = {}) => {
+  try {
+    const resp = await webApi.get('/dg_by_site_api/', { 
+      params,
+      timeout: 30000 
+    });
+    return resp.data;
+  } catch (e) {
+    console.warn('[fetchDgBySiteReport]', e.message);
+    throw e;
+  }
+};
+
+// ─── fetchSiteList ───────────────────────────────────────────────────────────
+export const fetchSiteList = async (params = {}) => {
+  try {
+    const resp = await webApi.get('/site_list_api/', { 
+      params,
+      timeout: 20000 
+    });
+    return resp.data;
+  } catch (e) {
+    console.warn('[fetchSiteList]', e.message);
+    throw e;
   }
 };
 
