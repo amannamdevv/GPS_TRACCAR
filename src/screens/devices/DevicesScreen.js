@@ -16,12 +16,14 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Header from '../../components/Header';
 import DeviceCard from '../../components/DeviceCard';
 import { fetchDeviceList, loginApi } from '../../api/webApi';
+import { useFilter } from '../../context/FilterContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const DevicesScreen = ({ navigation, route }) => {
   const { userToken, isLoading } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
+  const { apiFilters } = useFilter();
 
   const [allDevices, setAllDevices] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -67,7 +69,7 @@ const DevicesScreen = ({ navigation, route }) => {
         }
       }
 
-      const data = await fetchDeviceList({}, signal);
+      const data = await fetchDeviceList(apiFilters, signal);
       if (!signal.aborted) {
         setAllDevices(data.devices || []);
       }
@@ -81,7 +83,7 @@ const DevicesScreen = ({ navigation, route }) => {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [apiFilters]);
 
   useEffect(() => {
     if (!isLoading && userToken) {

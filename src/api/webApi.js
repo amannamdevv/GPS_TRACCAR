@@ -591,15 +591,25 @@ export const fetchDgDashboard = async () => {
 // ─── fetchDgDashboardTop10 ───────────────────────────────────────────────────
 export const fetchDgDashboardTop10 = async (options = {}) => {
   try {
-    const params = {};
-    if (options.start_date) params.start_date = options.start_date;
-    if (options.end_date) params.end_date = options.end_date;
+    const params = { limit: 10 };
+    if (options.from_date) params.from_date = options.from_date;
+    if (options.to_date) params.to_date = options.to_date;
+    if (options.client_id) params.client_id = options.client_id;
+    if (options.state_id) params.state_id = options.state_id;
+    if (options.district_id) params.district_id = options.district_id;
+    if (options.cluster_id) params.cluster_id = options.cluster_id;
     
     const resp = await webApi.get('/dg_dashboard_top10_api/', { 
       params,
-      timeout: 15000, 
+      timeout: 20000, 
     });
-    return resp.data || { top_moving: [], top_running: [], top_idle: [] };
+    
+    const data = resp.data || {};
+    return {
+      top_moving: Array.isArray(data.top_moving) ? data.top_moving : [],
+      top_running: Array.isArray(data.top_running) ? data.top_running : [],
+      top_idle: Array.isArray(data.top_idle) ? data.top_idle : [],
+    };
   } catch (e) {
     console.warn('[fetchDgDashboardTop10]', e.message);
     return { top_moving: [], top_running: [], top_idle: [] };
@@ -653,6 +663,31 @@ export const fetchSiteList = async (params = {}) => {
   } catch (e) {
     console.warn('[fetchSiteList]', e.message);
     throw e;
+  }
+};
+
+// ─── fetchNearbyDg ───────────────────────────────────────────────────────────
+export const fetchNearbyDg = async (params = {}) => {
+  try {
+    const resp = await webApi.get('/nearby_dg_api/', { 
+      params,
+      timeout: 30000 
+    });
+    return resp.data;
+  } catch (e) {
+    console.warn('[fetchNearbyDg]', e.message);
+    throw e;
+  }
+};
+
+// ─── fetchDgCurrentDeviceVoltage ─────────────────────────────────────────────
+export const fetchDgCurrentDeviceVoltage = async (params = {}) => {
+  try {
+    const resp = await webApi.get('/dg_current_device_voltage_api/', { params, timeout: 15000 });
+    return resp.data;
+  } catch (error) {
+    console.warn('[fetchDgCurrentDeviceVoltage]', error.message);
+    return null;
   }
 };
 

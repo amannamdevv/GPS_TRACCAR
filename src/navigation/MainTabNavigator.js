@@ -24,6 +24,8 @@ import ReportsScreen from '../screens/reports/ReportsScreen';
 import SettingsScreen from '../screens/settings/SettingsScreen';
 import AlarmDashboardScreen from '../screens/alarms/AlarmDashboardScreen';
 import DgBySiteScreen from '../screens/reports/DgBySiteScreen';
+import SiteListReportScreen from '../screens/reports/SiteListReportScreen';
+import NearDgMapScreen from '../screens/reports/NearDgMapScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -37,6 +39,8 @@ const DashboardStack = () => (
     <Stack.Screen name="Playback" component={PlaybackScreen} />
     <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
     <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
+    <Stack.Screen name="NearDgMapScreen" component={NearDgMapScreen} />
+    <Stack.Screen name="DgBySiteScreen" component={DgBySiteScreen} />
   </Stack.Navigator>
 );
 const MonitorStack = () => (
@@ -47,6 +51,8 @@ const MonitorStack = () => (
     <Stack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
     <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
     <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
+    <Stack.Screen name="NearDgMapScreen" component={NearDgMapScreen} />
+    <Stack.Screen name="DgBySiteScreen" component={DgBySiteScreen} />
   </Stack.Navigator>
 );
 
@@ -58,6 +64,8 @@ const DevicesStack = () => (
     <Stack.Screen name="Playback" component={PlaybackScreen} />
     <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
     <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
+    <Stack.Screen name="NearDgMapScreen" component={NearDgMapScreen} />
+    <Stack.Screen name="DgBySiteScreen" component={DgBySiteScreen} />
   </Stack.Navigator>
 );
 
@@ -70,6 +78,8 @@ const AlertsStack = () => (
     <Stack.Screen name="Playback" component={PlaybackScreen} />
     <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
     <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
+    <Stack.Screen name="NearDgMapScreen" component={NearDgMapScreen} />
+    <Stack.Screen name="DgBySiteScreen" component={DgBySiteScreen} />
   </Stack.Navigator>
 );
 
@@ -85,6 +95,8 @@ const MeStack = () => (
     <Stack.Screen name="Playback" component={PlaybackScreen} />
     <Stack.Screen name="DetailInfo" component={DetailsInfoScreen} />
     <Stack.Screen name="DgBySiteScreen" component={DgBySiteScreen} />
+    <Stack.Screen name="SiteListReportScreen" component={SiteListReportScreen} />
+    <Stack.Screen name="NearDgMapScreen" component={NearDgMapScreen} />
   </Stack.Navigator>
 );
 

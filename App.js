@@ -3,6 +3,7 @@ import React, { useEffect, useContext } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'react-native';
 import { AuthProvider, AuthContext } from './src/context/AuthContext';
+import { FilterProvider } from './src/context/FilterContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import AlertNotificationService from './src/services/AlertNotificationService';
 import UpdateChecker from './src/services/UpdateChecker';
@@ -39,7 +40,9 @@ const App = () => {
     <SafeAreaProvider>
       <StatusBar barStyle="light-content" backgroundColor="#1565C0" />
       <AuthProvider>
-        <AppInner />
+        <FilterProvider>
+          <AppInner />
+        </FilterProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

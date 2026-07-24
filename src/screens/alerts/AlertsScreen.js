@@ -14,6 +14,7 @@ import moment from 'moment';
 import Header from '../../components/Header';
 import { fetchAlarms, fetchCustomEvents, fetchDeviceList } from '../../api/webApi';
 import AlertNotificationService from '../../services/AlertNotificationService';
+import { useFilter } from '../../context/FilterContext';
 
 // ─── Cache keys ───────────────────────────────────────────────────────────────
 const CACHE = {
@@ -174,6 +175,7 @@ const AlertsScreen = ({ navigation }) => {
   const [deviceNames, setDeviceNames] = useState({});
   const [showFilter, setShowFilter] = useState(false);
   const [syncError, setSyncError] = useState(null);   // surface network errors to UI
+  const { apiFilters } = useFilter();
 
   const [pendingDeviceQ, setPendingDeviceQ] = useState('');
   const [pendingTypes, setPendingTypes] = useState([]);
@@ -363,7 +365,7 @@ const AlertsScreen = ({ navigation }) => {
     // ── Step 2: Fetch device list (with retry) ────────────────────────────
     let myDeviceIds = new Set(Object.keys(AlertNotificationService.deviceMap).map(String));
     try {
-      const devData = await withRetry(() => fetchDeviceList());
+      const devData = await withRetry(() => fetchDeviceList(apiFilters));
       const myDevs = Array.isArray(devData) ? devData : (devData?.devices || []);
       const names = {};
       myDevs.forEach(d => { if (d.id != null) names[d.id] = d.name || `Device ${d.id}`; });
@@ -433,7 +435,7 @@ const AlertsScreen = ({ navigation }) => {
       setRefreshing(false);
       syncInProgress.current = false;
     }
-  }, []);
+  }, [apiFilters]);
 
   useFocusEffect(
     useCallback(() => {

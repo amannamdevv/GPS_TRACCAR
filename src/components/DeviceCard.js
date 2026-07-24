@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { reverseGeocode } from '../api/webApi';
 
@@ -38,7 +39,8 @@ const getBatteryInfo = (level, isCharging) => {
 };
 
 const DeviceCard = ({ device, onPress }) => {
-  const [address, setAddress] = useState('Loading address...');
+  const navigation = useNavigation();
+  const [address, setAddress] = useState(device.address || 'Loading address...');
   const signalInfo = getSignalInfo(device.rssi);
   const statusStr = String(device.status || '').toLowerCase();
   const isOnline = statusStr === 'online';
@@ -174,11 +176,14 @@ const DeviceCard = ({ device, onPress }) => {
           </View>
 
           {/* Industry ID */}
-          <View style={styles.telItem}>
-            <Icon name="factory" size={17} color="#64748b" />
-            <Text style={styles.telLabel}>Site id:</Text>
-            <Text style={styles.telValue}>{device.nearest_indus_id || 'N/A'}</Text>
-          </View>
+          <TouchableOpacity 
+            style={[styles.telItem, { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginVertical: 2, borderWidth: 1, borderColor: '#3b82f6' }]}
+            onPress={() => navigation.navigate('DgBySiteScreen', { initialDevice: device })}
+          >
+            <Icon name="factory" size={17} color="#60a5fa" />
+            <Text style={[styles.telLabel, { color: '#60a5fa', fontWeight: 'bold' }]}>Site ID Report:</Text>
+            <Text style={[styles.telValue, { color: '#60a5fa', fontWeight: 'bold', textDecorationLine: 'underline' }]}>{device.nearest_indus_id || 'N/A'}</Text>
+          </TouchableOpacity>
           {/* Moving Status */}
           <View style={styles.telItem}>
             <Icon

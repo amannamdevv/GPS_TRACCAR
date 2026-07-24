@@ -195,6 +195,8 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 13, color: '#475569', fontWeight: '500', flex: 1 },
   rowValue: { fontSize: 13, color: '#0f172a', fontWeight: '600', textAlign: 'right', maxWidth: '55%' },
   divider: { height: 1, backgroundColor: '#f1f5f9', marginLeft: 44 },
+  actionBtn: { flexDirection: 'row', backgroundColor: '#1565C0', padding: 14, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginTop: 10, elevation: 2 },
+  actionBtnText: { color: '#ffffff', fontSize: 15, fontWeight: 'bold' }
 });
 
 export default DetailsInfoScreen;

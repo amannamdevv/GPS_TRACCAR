@@ -26,6 +26,7 @@ import AlertNotificationService from '../../services/AlertNotificationService';
 
 // API Services
 import { fetchDeviceList, reverseGeocode, fetchDeviceLatestMapApi } from '../../api/webApi';
+import { useFilter } from '../../context/FilterContext';
 
 const { height, width } = Dimensions.get('window');
 const REFRESH_INTERVAL = 5000;
@@ -56,6 +57,7 @@ async function displayNotification(title, body, timestamp) {
 
 const MapScreen = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
+  const { apiFilters } = useFilter();
   const webViewRef = useRef(null);
   const prevPositionsRef = useRef({});
   const seenAlarmsRef = useRef(new Set());
@@ -512,7 +514,7 @@ const MapScreen = ({ navigation, route }) => {
     isFetchingRef.current = true;
 
     try {
-      const dataResp = await fetchDeviceList();
+      const dataResp = await fetchDeviceList(apiFilters);
       let devicesData = [];
       if (dataResp && dataResp.devices) {
         devicesData = dataResp.devices || [];
@@ -603,7 +605,7 @@ const MapScreen = ({ navigation, route }) => {
       isFetchingRef.current = false;
       setLoading(false);
     }
-  }, []);
+  }, [apiFilters]);
 
   // Helper to compute haversine distance
   const haversine = (lat1, lon1, lat2, lon2) => {
