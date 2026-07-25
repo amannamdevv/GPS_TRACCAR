@@ -69,10 +69,9 @@ const DevicesStack = () => (
   </Stack.Navigator>
 );
 
-const AlertsStack = () => (
+const SiteListStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
-    <Stack.Screen name="AlertsList" component={AlertsScreen} />
-    <Stack.Screen name="AlertDetails" component={AlertDetailsScreen} />
+    <Stack.Screen name="SiteListReportScreen" component={SiteListReportScreen} />
     <Stack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
     <Stack.Screen name="Tracking" component={TrackingScreen} />
     <Stack.Screen name="Playback" component={PlaybackScreen} />
@@ -86,6 +85,8 @@ const AlertsStack = () => (
 const MeStack = () => (
   <Stack.Navigator screenOptions={{ headerShown: false }}>
     <Stack.Screen name="MeMain" component={MeScreen} />
+    <Stack.Screen name="AlertsList" component={AlertsScreen} />
+    <Stack.Screen name="AlertDetails" component={AlertDetailsScreen} />
     <Stack.Screen name="Reports" component={ReportsScreen} />
     <Stack.Screen name="DgStatusLog" component={DgStatusLogScreen} />
     <Stack.Screen name="Settings" component={SettingsScreen} />
@@ -129,8 +130,8 @@ const MainTabNavigator = () => {
             iconName = focused ? 'map-search' : 'map-search-outline';
           } else if (route.name === 'DeviceTab') {
             iconName = focused ? 'truck' : 'truck-outline';
-          } else if (route.name === 'AlertTab') {
-            iconName = focused ? 'bell' : 'bell-outline';
+          } else if (route.name === 'SiteListTab') {
+            iconName = 'transmission-tower';
           } else if (route.name === 'MeTab') {
             iconName = focused ? 'account' : 'account-outline';
           }
@@ -185,12 +186,12 @@ const MainTabNavigator = () => {
         })}
       />
       <Tab.Screen
-        name="AlertTab"
-        component={AlertsStack}
-        options={{ tabBarLabel: 'Alert' }}
+        name="SiteListTab"
+        component={SiteListStack}
+        options={{ tabBarLabel: 'Site List' }}
         listeners={({ navigation, route }) => ({
           tabPress: e => {
-            navigation.navigate(route.name, { screen: 'AlertsList' });
+            navigation.navigate(route.name, { screen: 'SiteListReportScreen' });
           },
         })}
       />

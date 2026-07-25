@@ -66,6 +66,7 @@ const generateMapHtml = () => {
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
 
     var markers = [];
+    var polylines = [];
     var radiusCircle = null;
 
     function createTowerIcon(isDg, tower) {
@@ -105,6 +106,10 @@ const generateMapHtml = () => {
         if (data.type === 'CLEAR') {
           markers.forEach(function(m) { map.removeLayer(m); });
           markers = [];
+          if (polylines && polylines.length > 0) {
+            polylines.forEach(function(p) { map.removeLayer(p); });
+            polylines = [];
+          }
           if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
           bounds = L.latLngBounds();
           map.setView([20.5937, 78.9629], 5, { animate: true });
@@ -115,12 +120,18 @@ const generateMapHtml = () => {
           if (data.type === 'PLOT') {
             markers.forEach(function(m) { map.removeLayer(m); });
             markers = [];
+            if (polylines && polylines.length > 0) {
+              polylines.forEach(function(p) { map.removeLayer(p); });
+              polylines = [];
+            }
             if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
             bounds = L.latLngBounds();
           }
 
           // Center site marker + radius circle
+          var siteCenter = null;
           if (data.center && data.center.latitude && data.center.longitude) {
+             siteCenter = [data.center.latitude, data.center.longitude];
              var icon = createTowerIcon(false, data.center);
              var m = L.marker([data.center.latitude, data.center.longitude], { icon: icon, zIndexOffset: 999 }).addTo(map);
              m.bindPopup("<div class='dev-popup'><div class='dev-popup-title' style='color:#94a3b8'>&#128333; " + (data.center.site_name || 'Site') + "</div></div>");
@@ -211,6 +222,17 @@ const generateMapHtml = () => {
                 markers.push(m);
                 if (!deviceCenter) deviceCenter = [d.latitude, d.longitude];
                 
+                // Draw line from site to DG
+                if (siteCenter && d.latitude && d.longitude) {
+                  var line = L.polyline([siteCenter, [d.latitude, d.longitude]], {
+                    color: '#0ea5e9',
+                    weight: 1.5,
+                    dashArray: '5,5',
+                    opacity: 0.6
+                  }).addTo(map);
+                  polylines.push(line);
+                }
+
                 bounds.extend([d.latitude, d.longitude]);
              });
           }
@@ -476,17 +498,29 @@ const NearDgMapScreen = ({ route, navigation }) => {
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>SEARCH RADIUS</Text>
               <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', paddingVertical: 0 }]}>
-                <TouchableOpacity onPress={() => setRadius(prev => Math.max(1, parseInt(prev || 0) - 5).toString())} style={{ padding: 10 }}>
+                <TouchableOpacity onPress={() => {
+                  const newRad = Math.max(5, parseInt(radius || 0) - 5).toString();
+                  setRadius(newRad);
+                  loadData(newRad);
+                }} style={{ padding: 10 }}>
                   <Icon name="minus" size={16} color="#64748b" />
                 </TouchableOpacity>
                 <TextInput
                   style={{ flex: 1, textAlign: 'center', fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}
                   keyboardType="numeric"
                   value={radius}
-                  onChangeText={setRadius}
+                  onChangeText={(val) => {
+                    let num = parseInt(val);
+                    if (!isNaN(num) && num > 150) setRadius('150');
+                    else setRadius(val);
+                  }}
                 />
                 <Text style={{ fontSize: 12, color: '#64748b', fontWeight: 'bold' }}>KM</Text>
-                <TouchableOpacity onPress={() => setRadius(prev => (parseInt(prev || 0) + 5).toString())} style={{ padding: 10 }}>
+                <TouchableOpacity onPress={() => {
+                  const newRad = Math.min(150, parseInt(radius || 0) + 5).toString();
+                  setRadius(newRad);
+                  loadData(newRad);
+                }} style={{ padding: 10 }}>
                   <Icon name="plus" size={16} color="#64748b" />
                 </TouchableOpacity>
               </View>

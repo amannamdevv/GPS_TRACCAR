@@ -17,9 +17,10 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Path, G, Text as SvgText, Circle, Defs, ClipPath, Rect, Polyline, Line } from 'react-native-svg';
 import Header from '../../components/Header';
 import DeviceCard from '../../components/DeviceCard';
-import { fetchDeviceList, fetchDgDashboard, fetchDgDashboardTop10, fetchFilterDropdowns } from '../../api/webApi';
+import { fetchDeviceList, fetchDgDashboard, fetchDgDashboardTop10, fetchFilterDropdowns, fetchDgCurrentDeviceVoltage } from '../../api/webApi';
 import { Modal, ScrollView } from 'react-native';
 import { AuthContext } from '../../context/AuthContext';
+import { useFilter } from '../../context/FilterContext';
 import moment from 'moment';
 
 const { width } = Dimensions.get('window');
@@ -68,9 +69,16 @@ const formatDurationHumanReadable = (valHours) => {
   }
 };
 
-const Top10BarChart = ({ data }) => {
+const Top10BarChart = ({ data, dateRange = '7days', onDateRangeChange }) => {
   const [barChartMode, setBarChartMode] = React.useState('distance');
   const [tooltipPos, setTooltipPos] = React.useState({ index: null, x: 0 });
+  const [showDateDrop, setShowDateDrop] = React.useState(false);
+
+  const dateLabels = {
+    yesterday: 'Yesterday',
+    '7days': 'Last 7 Days',
+    '30days': 'Last 30 Days'
+  };
 
   const activeData = React.useMemo(() => {
     if (!data) return [];
@@ -136,6 +144,37 @@ const Top10BarChart = ({ data }) => {
           {barChartMode === 'distance' ? 'Top Moving DGs' : barChartMode === 'onTime' ? 'Top Running DGs' : 'Top Idle DGs'}
         </Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+          {onDateRangeChange && (
+            <View style={{ position: 'relative', zIndex: 50 }}>
+              <TouchableOpacity
+                onPress={() => setShowDateDrop(!showDateDrop)}
+                style={{ paddingHorizontal: 8, paddingVertical: 4, backgroundColor: '#f1f5f9', borderRadius: 6, marginRight: 12, borderWidth: 1, borderColor: '#cbd5e1', flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ fontSize: 11, color: '#475569', fontWeight: 'bold' }}>{dateLabels[dateRange]}</Text>
+                <Text style={{ fontSize: 10, color: '#475569', marginLeft: 4 }}>▼</Text>
+              </TouchableOpacity>
+
+              {showDateDrop && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => setShowDateDrop(false)}>
+                  <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowDateDrop(false)}>
+                    <View style={{ position: 'absolute', top: '50%', left: '50%', transform: [{ translateX: -75 }, { translateY: -75 }], backgroundColor: '#fff', borderRadius: 8, padding: 8, width: 150, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, elevation: 5 }}>
+                      {Object.entries(dateLabels).map(([key, label]) => (
+                        <TouchableOpacity
+                          key={key}
+                          style={{ padding: 10, borderBottomWidth: key !== '30days' ? 1 : 0, borderBottomColor: '#f1f5f9' }}
+                          onPress={() => {
+                            setShowDateDrop(false);
+                            if (key !== dateRange) onDateRangeChange(key);
+                          }}>
+                          <Text style={{ fontSize: 13, color: key === dateRange ? '#3b82f6' : '#334155', fontWeight: key === dateRange ? '700' : '500' }}>{label}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </TouchableOpacity>
+                </Modal>
+              )}
+            </View>
+          )}
+
           <TouchableOpacity onPress={() => handleModeChange('distance')} style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: barChartMode === 'distance' ? '#3b82f6' : '#e2e8f0', borderRadius: 12, marginRight: 8 }}>
             <Text style={{ fontSize: 11, color: barChartMode === 'distance' ? '#fff' : '#64748b', fontWeight: 'bold' }}>Move</Text>
           </TouchableOpacity>
@@ -150,7 +189,7 @@ const Top10BarChart = ({ data }) => {
 
       {values.length === 0 && (
         <View style={{ paddingVertical: 20, alignItems: 'center' }}>
-          <Text style={{ color: '#94a3b8' }}>No data available for the last 7 days</Text>
+          <Text style={{ color: '#94a3b8' }}>No data available for {dateLabels[dateRange]?.toLowerCase()}</Text>
         </View>
       )}
 
@@ -189,8 +228,12 @@ const Top10BarChart = ({ data }) => {
                   const maxBarWidth = 40;
                   const barWidth = Math.min(barSpacing * 0.55, maxBarWidth);
                   const x = (i * barSpacing) + (barSpacing - barWidth) / 2;
-                  const y = 180 - barH;
-                  const barColor = barChartMode === 'distance' ? '#3b82f6' : barChartMode === 'onTime' ? '#10b981' : '#f59e0b';
+                  const isZeroBar = numVal === 0;
+                  const displayBarH = isZeroBar ? 3 : Math.max(barH, 3);
+                  const displayY = 180 - displayBarH;
+                  const barColor = isZeroBar
+                    ? '#cbd5e1'
+                    : barChartMode === 'distance' ? '#3b82f6' : barChartMode === 'onTime' ? '#10b981' : '#f59e0b';
 
                   const isAnySelected = tooltipPos.index !== null;
                   const isSelected = tooltipPos.index === i;
@@ -210,7 +253,12 @@ const Top10BarChart = ({ data }) => {
                         }
                       }}
                     >
-                      <Rect x={x} y={y} width={barWidth} height={barH} fill={barColor} opacity={barOpacity} rx="4" />
+                      <Rect x={x} y={displayY} width={barWidth} height={displayBarH} fill={barColor} opacity={barOpacity} rx="4" />
+                      {isZeroBar && (
+                        <SvgText x={(i * barSpacing) + barSpacing / 2} y={displayY - 3} fontSize="9" fill="#94a3b8" textAnchor="middle">
+                          0
+                        </SvgText>
+                      )}
                       <SvgText x={(i * barSpacing) + barSpacing / 2} y={198} fontSize="11" fill="#64748b" textAnchor="middle" fontWeight="bold">
                         {labels[i]}
                       </SvgText>
@@ -373,16 +421,45 @@ const TopRankingsCard = ({ title, subtitle, data, valueKey, labelKey, unitFormat
   );
 };
 
+const getTop10Dates = (range) => {
+  if (range === 'yesterday') {
+    return {
+      startDate: moment().subtract(1, 'days').format('YYYY-MM-DD'),
+      endDate: moment().subtract(1, 'days').format('YYYY-MM-DD')
+    };
+  } else if (range === '30days') {
+    return {
+      startDate: moment().subtract(30, 'days').format('YYYY-MM-DD'),
+      endDate: moment().subtract(1, 'days').format('YYYY-MM-DD')
+    };
+  }
+  return {
+    // 7 days ending yesterday (6 days ago to yesterday)
+    startDate: moment().subtract(6, 'days').format('YYYY-MM-DD'),
+    endDate: moment().subtract(1, 'days').format('YYYY-MM-DD')
+  };
+};
+
 // ─── DASHBOARD SCREEN ─────────────────────────────────────────────────────────
 const DashboardScreen = ({ navigation }) => {
   const { userInfo } = useContext(AuthContext);
   const isSuperadmin = userInfo?.user_type === 'Superadmin';
+  const { 
+    appliedClient: globalClient,
+    appliedState: globalState,
+    appliedDistrict: globalDistrict,
+    appliedCluster: globalCluster,
+    appliedDevice: globalDevice,
+    applyFilter: applyGlobalFilter, 
+    clearFilter: clearGlobalFilter 
+  } = useFilter();
 
   const [data, setData] = useState(null);
   const [devices, setDevices] = useState([]);
-  const [selDevice, setSelDevice] = useState(null);
+  const [selDevice, setSelDevice] = useState(globalDevice);
   const [dgDashboardData, setDgDashboardData] = useState(null);
   const [dgDashboardTop10Data, setDgDashboardTop10Data] = useState(null);
+  const [top10DateRange, setTop10DateRange] = useState('7days');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
@@ -395,16 +472,16 @@ const DashboardScreen = ({ navigation }) => {
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [dropdowns, setDropdowns] = useState({ clients: [], states: [], districts: [], clusters: [] });
   // Panel UI states
-  const [selClient, setSelClient] = useState(null);
-  const [selState, setSelState] = useState(null);
-  const [selDistrict, setSelDistrict] = useState(null);
-  const [selCluster, setSelCluster] = useState(null);
+  const [selClient, setSelClient] = useState(globalClient);
+  const [selState, setSelState] = useState(globalState);
+  const [selDistrict, setSelDistrict] = useState(globalDistrict);
+  const [selCluster, setSelCluster] = useState(globalCluster);
   // Applied filters (used for actual list rendering)
-  const [appliedClient, setAppliedClient] = useState(null);
-  const [appliedState, setAppliedState] = useState(null);
-  const [appliedDistrict, setAppliedDistrict] = useState(null);
-  const [appliedCluster, setAppliedCluster] = useState(null);
-  const [appliedDevice, setAppliedDevice] = useState(null);
+  const [appliedClient, setAppliedClient] = useState(globalClient);
+  const [appliedState, setAppliedState] = useState(globalState);
+  const [appliedDistrict, setAppliedDistrict] = useState(globalDistrict);
+  const [appliedCluster, setAppliedCluster] = useState(globalCluster);
+  const [appliedDevice, setAppliedDevice] = useState(globalDevice);
 
   const [previewDevices, setPreviewDevices] = useState([]);
 
@@ -426,7 +503,7 @@ const DashboardScreen = ({ navigation }) => {
 
   // Live timer (updated on screen focus and every second)
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [voltageStats, setVoltageStats] = useState({ normal: 0, critical: 0, danger: 0, offline: 0, total: 0 });
+  const [voltageData, setVoltageData] = useState([]);
 
   // Update the time every second
   useEffect(() => {
@@ -436,34 +513,43 @@ const DashboardScreen = ({ navigation }) => {
 
   // ─── FETCH ──────────────────────────────────────────────────────────────────
   const loadData = useCallback(async (isRefresh = false) => {
-    isRefresh ? setRefreshing(true) : setLoading(true);
+    if (isRefresh) {
+      setRefreshing(true);
+      // Clear old data to ensure fresh data is visible immediately after refresh completes
+      setDevices([]);
+      setDgDashboardData(null);
+      setDgDashboardTop10Data(null);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     try {
-      const startDate = moment().subtract(7, 'days').format('YYYY-MM-DD');
-      const endDate = moment().format('YYYY-MM-DD');
+      const { startDate, endDate } = getTop10Dates(top10DateRange);
 
-      const [deviceResp, dgResp, ddResp, top10Resp] = await Promise.all([
-        fetchDeviceList(),
-        fetchDgDashboard(),
-        fetchFilterDropdowns(),
-        fetchDgDashboardTop10({ start_date: startDate, end_date: endDate }),
-      ]);
+      const apiFilters = {};
+      if (appliedClient) apiFilters.client_id = appliedClient.id;
+      if (appliedState) apiFilters.state_id = appliedState.id;
+      if (appliedDistrict) apiFilters.district_id = appliedDistrict.id;
+      if (appliedCluster) apiFilters.cluster_id = appliedCluster.id;
+
+      const deviceResp = await fetchDeviceList(apiFilters, isRefresh);
       const devicesArr = deviceResp.devices || [];
       setDevices(devicesArr);
+
+      const top10Params = { from_date: startDate, to_date: endDate, ...apiFilters };
+
+      const [dgResp, ddResp, top10Resp, voltResp] = await Promise.all([
+        fetchDgDashboard(apiFilters),
+        fetchFilterDropdowns(),
+        fetchDgDashboardTop10(top10Params),
+        fetchDgCurrentDeviceVoltage()
+      ]);
       setDgDashboardData(dgResp || null);
       setDgDashboardTop10Data(top10Resp || null);
       setDropdowns(ddResp);
 
-      let normal = 0, critical = 0, danger = 0;
-      devicesArr.forEach(item => {
-        let voltage = parseFloat(item.adc1 || "0");
-        if (isNaN(voltage)) voltage = 0;
-
-        if (voltage < 9.5) danger++;
-        else if (voltage >= 9.5 && voltage < 10.0) critical++;
-        else if (voltage >= 10.0) normal++;
-      });
-      setVoltageStats({ normal, critical, danger, total: devicesArr.length });
+      const voltData = voltResp?.data || [];
+      setVoltageData(voltData);
     } catch (err) {
       setError(err.message || 'Failed to sync dashboard data');
     } finally {
@@ -560,6 +646,23 @@ const DashboardScreen = ({ navigation }) => {
     });
   }, [devices, appliedDevice]);
 
+  const voltageStats = useMemo(() => {
+    let normal = 0, critical = 0, danger = 0, total = 0;
+    const allowedDeviceIds = new Set(cascadeFilteredDevices.map(d => String(d.id || d.deviceid)));
+
+    voltageData.forEach(item => {
+      if (allowedDeviceIds.has(String(item.deviceid))) {
+        let voltage = parseFloat(item.adc1_voltage || "0");
+        if (isNaN(voltage)) voltage = 0;
+        if (voltage < 9.5) danger++;
+        else if (voltage >= 9.5 && voltage < 10.0) critical++;
+        else if (voltage >= 10.0) normal++;
+        total++;
+      }
+    });
+    return { normal, critical, danger, total };
+  }, [voltageData, cascadeFilteredDevices]);
+
   // Global metrics reflect the currently applied cascade filters
   const globalMetrics = useMemo(() => {
     const total = cascadeFilteredDevices.length;
@@ -636,15 +739,19 @@ const DashboardScreen = ({ navigation }) => {
 
   const filteredDgTop10Data = useMemo(() => {
     if (!dgDashboardTop10Data) return null;
-    const allowedDeviceIds = new Set(filteredDevices.map(d => String(d.id || d.deviceid)));
+
+    // The user requested to directly use the JSON response from the API without any local filtering or padding.
+    // The backend /dg_dashboard_top10_api/ already returns the top 10 devices.
+    const top_moving = (dgDashboardTop10Data.top_moving || []).slice(0, 10);
+    const top_running = (dgDashboardTop10Data.top_running || []).slice(0, 10);
+    const top_idle = (dgDashboardTop10Data.top_idle || []).slice(0, 10);
 
     return {
-      top_moving: (dgDashboardTop10Data.top_moving || []).filter(item => allowedDeviceIds.has(String(item.deviceid))),
-      top_running: (dgDashboardTop10Data.top_running || []).filter(item => allowedDeviceIds.has(String(item.deviceid))),
-      top_idle: (dgDashboardTop10Data.top_idle || []).filter(item => allowedDeviceIds.has(String(item.deviceid))),
+      top_moving,
+      top_running,
+      top_idle,
     };
-  }, [dgDashboardTop10Data, filteredDevices]);
-
+  }, [dgDashboardTop10Data]);
   // Device options for the Device dropdown inside the filter panel
   // Dynamically filtered based on the current panel selection via previewDevices
   const filteredDeviceOptions = useMemo(() => {
@@ -658,11 +765,20 @@ const DashboardScreen = ({ navigation }) => {
     setSelClient(null); setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); setOpenDrop(null);
     // Reset applied state
     setAppliedClient(null); setAppliedState(null); setAppliedDistrict(null); setAppliedCluster(null); setAppliedDevice(null);
+    // Clear global filter — other screens will now fetch unfiltered data
+    clearGlobalFilter();
     // Re-fetch full unfiltered list from backend
     setFilterLoading(true);
     try {
+      const { startDate, endDate } = getTop10Dates(top10DateRange);
+
       const resp = await fetchDeviceList({});
-      setDevices(resp.devices || []);
+      const devs = resp.devices || [];
+      setDevices(devs);
+
+      const top10Params = { from_date: startDate, to_date: endDate };
+      const top10Resp = await fetchDgDashboardTop10(top10Params);
+      setDgDashboardTop10Data(top10Resp || null);
     } catch (e) {
       console.warn('[clearCascade]', e.message);
     } finally {
@@ -688,15 +804,57 @@ const DashboardScreen = ({ navigation }) => {
     if (selCluster) apiFilters.cluster_id = selCluster.id;
     // selDevice is handled client-side by cascadeFilteredDevices (matched by ID)
 
+    // Update global filter context — other screens will pick this up
+    applyGlobalFilter(
+      { client: selClient, state: selState, district: selDistrict, cluster: selCluster, device: selDevice },
+      apiFilters
+    );
+
     setFilterLoading(true);
     try {
+      const { startDate, endDate } = getTop10Dates(top10DateRange);
+
       const resp = await fetchDeviceList(apiFilters);
-      setDevices(resp.devices || []);
+      const devs = resp.devices || [];
+      setDevices(devs);
+
+      const top10Params = { from_date: startDate, to_date: endDate, ...apiFilters };
+      const top10Resp = await fetchDgDashboardTop10(top10Params);
+      setDgDashboardTop10Data(top10Resp || null);
     } catch (e) {
       console.warn('[applyCascade]', e.message);
     } finally {
       setFilterLoading(false);
       setShowFilterPanel(false);
+    }
+  };
+
+  const handleTop10DateRangeChange = async (newRange) => {
+    setTop10DateRange(newRange);
+    try {
+      const { startDate, endDate } = getTop10Dates(newRange);
+
+      const apiFilters = {};
+      if (appliedClient) apiFilters.client_id = appliedClient.id;
+      if (appliedState) apiFilters.state_id = appliedState.id;
+      if (appliedDistrict) apiFilters.district_id = appliedDistrict.id;
+      if (appliedCluster) apiFilters.cluster_id = appliedCluster.id;
+
+      const top10Params = { from_date: startDate, to_date: endDate, ...apiFilters };
+      const top10Resp = await fetchDgDashboardTop10(top10Params);
+      setDgDashboardTop10Data(top10Resp || null);
+    } catch (e) {
+      console.warn('handleTop10DateRangeChange error:', e.message);
+    }
+  };
+
+  const toggleFilterDrop = (key) => {
+    const isOpen = openDrop === key;
+    if (isOpen) {
+      setOpenDrop(null);
+    } else {
+      setOpenDrop(key);
+      setDropSearchQuery('');
     }
   };
 
@@ -913,9 +1071,8 @@ const DashboardScreen = ({ navigation }) => {
         <View style={{ marginTop: 10 }}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingHorizontal: 8, marginBottom: 0 }}>
             <Text style={{ fontSize: 18, fontWeight: '800', color: '#0f172a' }}>DG Performance</Text>
-            <Text style={{ fontSize: 13, fontWeight: '600', color: '#1565C0' }}>Last 7 Days</Text>
           </View>
-          <Top10BarChart data={filteredDgTop10Data} />
+          <Top10BarChart data={filteredDgTop10Data} dateRange={top10DateRange} onDateRangeChange={handleTop10DateRangeChange} />
         </View>
       )}
 

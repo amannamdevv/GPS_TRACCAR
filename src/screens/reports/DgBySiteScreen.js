@@ -74,6 +74,7 @@ const generateMapHtml = () => `
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18 }).addTo(map);
 
     var markers = [];
+    var polylines = [];
     var radiusCircle = null;
 
     var devIcon = L.divIcon({ className: 'custom-div-icon', html: "<div style='background-color:#1a3a6b;width:14px;height:14px;border-radius:50%;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.5);'></div>", iconSize: [18, 18], iconAnchor: [9, 9] });
@@ -115,15 +116,24 @@ const generateMapHtml = () => `
         if (data.type === 'CLEAR') {
           markers.forEach(function(m) { map.removeLayer(m); });
           markers = [];
+          if (polylines && polylines.length > 0) {
+            polylines.forEach(function(p) { map.removeLayer(p); });
+            polylines = [];
+          }
           if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
           bounds = L.latLngBounds();
           map.setView([20.5937, 78.9629], 5, { animate: true });
           return;
         }
+
         if (data.type === 'PLOT' || data.type === 'PLOT_MORE') {
           if (data.type === 'PLOT') {
             markers.forEach(function(m) { map.removeLayer(m); });
             markers = [];
+            if (polylines && polylines.length > 0) {
+              polylines.forEach(function(p) { map.removeLayer(p); });
+              polylines = [];
+            }
             if (radiusCircle) { map.removeLayer(radiusCircle); radiusCircle = null; }
             bounds = L.latLngBounds();
           }
@@ -265,6 +275,18 @@ const generateMapHtml = () => `
                   "</div>";
 
                 m.bindPopup(towerPopupHtml, { maxWidth: 260 });
+                
+                // Draw line from device to tower
+                if (deviceCenter && t.latitude && t.longitude) {
+                  var line = L.polyline([deviceCenter, [t.latitude, t.longitude]], {
+                    color: isDg ? '#0ea5e9' : '#94a3b8',
+                    weight: 1.5,
+                    dashArray: '5,5',
+                    opacity: 0.6
+                  }).addTo(map);
+                  polylines.push(line);
+                }
+
                 m.on('popupopen', function() { m.getElement().classList.add('selected-tower'); });
                 m.on('popupclose', function() { m.getElement().classList.remove('selected-tower'); });
                 markers.push(m);
@@ -349,7 +371,7 @@ const DgBySiteScreen = ({ route, navigation }) => {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
-  const [radius, setRadius] = useState('10');
+  const [radius, setRadius] = useState('5');
   const [mapTouched, setMapTouched] = useState(false);
 
   const [reportData, setReportData] = useState(null);
@@ -506,7 +528,7 @@ const DgBySiteScreen = ({ route, navigation }) => {
 
   const handleReset = () => {
     // Clear everything — no auto load
-    setRadius('10');
+    setRadius('5');
     setShowSuggestions(false);
     setSearchQuery('');
     setSelectedDevice(null);
@@ -667,9 +689,36 @@ const DgBySiteScreen = ({ route, navigation }) => {
           )}
 
           <View style={styles.row}>
-            <View style={{ flex: 1, marginRight: 10 }}>
+            <View style={{ flex: 1.5, marginRight: 10 }}>
               <Text style={styles.label}>Radius (km)</Text>
-              <TextInput style={styles.input} keyboardType="numeric" value={radius} onChangeText={setRadius} placeholder="10" />
+              <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', paddingVertical: 0, paddingHorizontal: 0 }]}>
+                <TouchableOpacity onPress={() => {
+                  const newRad = Math.max(5, parseInt(radius || 0) - 5).toString();
+                  setRadius(newRad);
+                  loadData(null, newRad);
+                }} style={{ padding: 10 }}>
+                  <Icon name="minus" size={16} color="#64748b" />
+                </TouchableOpacity>
+                <TextInput
+                  style={{ flex: 1, textAlign: 'center', fontSize: 14, fontWeight: 'bold', color: '#0f172a' }}
+                  keyboardType="numeric"
+                  value={radius}
+                  onChangeText={(val) => {
+                    let num = parseInt(val);
+                    if (!isNaN(num) && num > 30) setRadius('30');
+                    else setRadius(val);
+                  }}
+                  placeholder="5"
+                />
+                <Text style={{ fontSize: 12, color: '#64748b', fontWeight: 'bold', marginRight: 5 }}>KM</Text>
+                <TouchableOpacity onPress={() => {
+                  const newRad = Math.min(30, parseInt(radius || 0) + 5).toString();
+                  setRadius(newRad);
+                  loadData(null, newRad);
+                }} style={{ padding: 10 }}>
+                  <Icon name="plus" size={16} color="#64748b" />
+                </TouchableOpacity>
+              </View>
             </View>
             <View style={{ flex: 1, justifyContent: 'flex-end' }}>
               <TouchableOpacity style={styles.applyBtn} onPress={handleApply} disabled={loading}>

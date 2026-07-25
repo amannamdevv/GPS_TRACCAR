@@ -130,7 +130,7 @@ const normalizeDeviceData = (rawData) => {
 };
 
 // ─── fetchDeviceList ──────────────────────────────────────────────────────────
-export const fetchDeviceList = (filters = {}) => _fetchDeviceList(filters);
+export const fetchDeviceList = (filters = {}, isRefresh = false) => _fetchDeviceList(filters, isRefresh);
 
 export const fetchDeviceLatestMapApi = async (deviceId = null) => {
   try {
@@ -142,25 +142,48 @@ export const fetchDeviceLatestMapApi = async (deviceId = null) => {
     return { towers: [] };
   }
 };
-const _fetchDeviceList = async (filters = {}) => {
+const _fetchDeviceList = async (filters = {}, isRefresh = false) => {
   try {
     let userDeviceIds = new Set();
     let restrictDevices = false;
     let deviceIdsParam = '';
+    let parsedUserInfo = null;
+
+    if (isRefresh) {
+      console.log("Refreshing dashboard...");
+      console.log("Fetching latest device list from server...");
+      try {
+        const email = await AsyncStorage.getItem('traccar_email');
+        const pass = await AsyncStorage.getItem('traccar_pass');
+        const server = await AsyncStorage.getItem('traccar_server');
+        if (email && pass) {
+          // Silently re-login to fetch fresh user profile (which contains updated device_ids)
+          const user = await loginApi(server || '', email, pass);
+          parsedUserInfo = { ...user, server: server || '' };
+          await AsyncStorage.setItem('userInfo', JSON.stringify(parsedUserInfo));
+        }
+      } catch (err) {
+        console.warn("Silent re-login failed during refresh", err);
+      }
+    }
+    
     try {
-      const userInfoStr = await AsyncStorage.getItem('userInfo');
-      if (userInfoStr) {
-        const userInfo = JSON.parse(userInfoStr);
-        if (userInfo.device_ids) {
-          if (Array.isArray(userInfo.device_ids)) {
-            userInfo.device_ids.forEach(id => {
-              if (id != null) userDeviceIds.add(String(id));
-            });
-          } else if (typeof userInfo.device_ids === 'string') {
-            userInfo.device_ids.split(',').forEach(id => {
-              if (id.trim()) userDeviceIds.add(String(id.trim()));
-            });
-          }
+      if (!parsedUserInfo) {
+        const userInfoStr = await AsyncStorage.getItem('userInfo');
+        if (userInfoStr) {
+          parsedUserInfo = JSON.parse(userInfoStr);
+        }
+      }
+      
+      if (parsedUserInfo && parsedUserInfo.device_ids) {
+        if (Array.isArray(parsedUserInfo.device_ids)) {
+          parsedUserInfo.device_ids.forEach(id => {
+            if (id != null) userDeviceIds.add(String(id));
+          });
+        } else if (typeof parsedUserInfo.device_ids === 'string') {
+          parsedUserInfo.device_ids.split(',').forEach(id => {
+            if (id.trim()) userDeviceIds.add(String(id.trim()));
+          });
         }
       }
     } catch (e) { /* ignore */ }
@@ -251,6 +274,11 @@ const _fetchDeviceList = async (filters = {}) => {
     const mergedArray = Array.from(map.values());
     const normalized = normalizeDeviceData(mergedArray);
     const devicesList = normalized.devices || [];
+    
+    if (isRefresh) {
+      console.log("Total devices received:", devicesList.length);
+    }
+    
     return {
       success: true,
       devices: devicesList,
