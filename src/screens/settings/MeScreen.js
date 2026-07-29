@@ -45,7 +45,7 @@ const MeScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <Header title="My Profile" navigation={navigation} />
+      <Header title={userInfo?.client_name || userInfo?.user_type || 'Profile'} navigation={navigation} />
 
       <ScrollView contentContainerStyle={styles.scroll}>
         {/* Profile Card */}
@@ -57,7 +57,7 @@ const MeScreen = ({ navigation }) => {
           </View>
           <View style={styles.profileInfo}>
             <Text style={styles.profileName}>{userInfo?.name || 'User'}</Text>
-            <Text style={styles.profileEmail}>{userInfo?.email || 'user@example.com'}</Text>
+            <Text style={styles.profileEmail}>{userInfo?.user_type || 'user@example.com'}</Text>
           </View>
         </View>
 

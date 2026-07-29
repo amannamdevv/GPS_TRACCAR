@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, forwardRef, useImperativeHandle, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList,
   ActivityIndicator, RefreshControl, Alert, TextInput, ScrollView, Modal
@@ -7,6 +7,7 @@ import Header from '../../components/Header';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { fetchSiteList, fetchFilterDropdowns } from '../../api/webApi';
 import moment from 'moment';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const StatCard = ({ icon, color, title, value, bgColor }) => (
   <View style={[styles.statCard, { borderLeftColor: color, borderLeftWidth: 3 }]}>
@@ -20,26 +21,60 @@ const StatCard = ({ icon, color, title, value, bgColor }) => (
   </View>
 );
 
-const CustomDropdown = ({ label, value, options, onSelect, placeholder }) => {
+const CustomDropdown = forwardRef(({ label, value, options, onSelect, placeholder }, ref) => {
   const [modalVisible, setModalVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useImperativeHandle(ref, () => ({
+    open: () => {
+      setSearchQuery('');
+      setModalVisible(true);
+    },
+    close: () => setModalVisible(false)
+  }));
+
+  const selectedOption = options.find(opt => opt.value === value);
+  const displayValue = selectedOption ? selectedOption.label : value;
+
+  const filteredOptions = options.filter(opt => opt.label.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
     <View style={styles.filterInputWrapper}>
       <Text style={styles.filterLabel}>{label}</Text>
-      <TouchableOpacity style={styles.dropdownBtn} onPress={() => setModalVisible(true)}>
+      <TouchableOpacity style={styles.dropdownBtn} onPress={() => { setSearchQuery(''); setModalVisible(true); }}>
         <Text style={[styles.dropdownBtnText, !value && { color: '#94a3b8' }]} numberOfLines={1}>
-          {value || placeholder}
+          {displayValue || placeholder}
         </Text>
         <Icon name="chevron-down" size={16} color="#64748b" />
       </TouchableOpacity>
 
       <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setModalVisible(false)}>
-          <View style={styles.dropdownMenu}>
+          <TouchableOpacity activeOpacity={1} style={styles.dropdownMenu} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.dropdownTitle}>Select {label}</Text>
+            
+            <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 8, paddingHorizontal: 10 }}>
+                <Icon name="magnify" size={20} color="#64748b" />
+                <TextInput
+                  style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 10, color: '#1e293b' }}
+                  placeholder="Search..."
+                  placeholderTextColor="#94a3b8"
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <Icon name="close" size={20} color="#64748b" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
             <FlatList
-              data={[{ label: `All ${label}`, value: '' }, ...options]}
+              data={[{ label: `All ${label}`, value: '' }, ...filteredOptions]}
               keyExtractor={(item, index) => String(index)}
+              keyboardShouldPersistTaps="handled"
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={[styles.dropdownItem, value === item.value && { backgroundColor: '#f1f5f9' }]}
@@ -56,14 +91,17 @@ const CustomDropdown = ({ label, value, options, onSelect, placeholder }) => {
               )}
               ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: '#f1f5f9' }} />}
             />
-          </View>
+          </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
     </View>
   );
-};
+});
 
 const SiteListReportScreen = ({ navigation }) => {
+  const distDropdownRef = useRef(null);
+  const clusterDropdownRef = useRef(null);
+
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -74,16 +112,17 @@ const SiteListReportScreen = ({ navigation }) => {
   const [totalSites, setTotalSites] = useState(0);
   const [dgSites, setDgSites] = useState(0);
   const [nonDgSites, setNonDgSites] = useState(0);
+  const [userRole, setUserRole] = useState(null);
 
   // Filters
   const [filters, setFilters] = useState({
     siteId: '',
     siteName: '',
-    state: '',
-    district: '',
-    cluster: '',
+    state_id: '',
+    dist_id: '',
+    cluster_id: '',
     siteType: '',
-    client: ''
+    client_id: ''
   });
   const [dropdownOptions, setDropdownOptions] = useState({
     clients: [],
@@ -96,37 +135,72 @@ const SiteListReportScreen = ({ navigation }) => {
     ]
   });
 
+  const mapOpt = (arr) => (arr || []).map(item => {
+    if (typeof item === 'string') return { label: item, value: item };
+    const label = item.name || item.state_name || item.district_name || item.cluster_name || item.client_name || String(item.id || '');
+    const value = item.id || item.value || label;
+    return { label, value };
+  });
+
+  const loadDropdowns = async (stateId = null, distId = null) => {
+    try {
+      const resp = await fetchFilterDropdowns(null, stateId, distId);
+      setDropdownOptions(prev => ({
+        clients: stateId || distId ? prev.clients : mapOpt(resp.clients),
+        states: stateId || distId ? prev.states : mapOpt(resp.states),
+        districts: stateId ? mapOpt(resp.districts) : [],
+        clusters: distId ? mapOpt(resp.clusters) : [],
+        siteTypes: prev.siteTypes || [
+          { label: 'DG Site', value: 'DG Site' },
+          { label: 'Non DG', value: 'Non DG' }
+        ]
+      }));
+    } catch (e) {
+      console.warn('Failed to load filter dropdowns', e);
+    }
+  };
+
   useEffect(() => {
-    const loadDropdowns = async () => {
+    const init = async () => {
       try {
-        const resp = await fetchFilterDropdowns();
-        const mapOpt = (arr) => (arr || []).map(item => {
-          if (typeof item === 'string') return { label: item, value: item };
-          const label = item.name || item.state_name || item.district_name || item.cluster_name || item.client_name || String(item.id || '');
-          const value = item.id || item.value || label;
-          return { label, value: label }; // Using label as value for filtering by name if backend expects name
-        });
-        setDropdownOptions({
-          clients: mapOpt(resp.clients),
-          states: mapOpt(resp.states),
-          districts: mapOpt(resp.districts),
-          clusters: mapOpt(resp.clusters),
-          siteTypes: [
-            { label: 'DG Site', value: 'DG Site' },
-            { label: 'Non DG', value: 'Non DG' }
-          ]
-        });
-      } catch (e) {
-        console.warn('Failed to load filter dropdowns', e);
-      }
+        const userInfoStr = await AsyncStorage.getItem('userInfo');
+        if (userInfoStr) {
+          const user = JSON.parse(userInfoStr);
+          setUserRole(user.role || user.is_superadmin ? 'superadmin' : '');
+        }
+      } catch (e) {}
+      loadDropdowns();
     };
-    loadDropdowns();
+    init();
   }, []);
+
+  const handleStateSelect = async (val) => {
+    setFilters(prev => ({ ...prev, state_id: val, dist_id: '', cluster_id: '' }));
+    await loadDropdowns(val, null);
+    if (val && distDropdownRef.current) {
+      setTimeout(() => {
+        distDropdownRef.current.open();
+      }, 100);
+    }
+  };
+
+  const handleDistrictSelect = async (val) => {
+    setFilters(prev => ({ ...prev, dist_id: val, cluster_id: '' }));
+    await loadDropdowns(filters.state_id, val);
+    if (val && clusterDropdownRef.current) {
+      setTimeout(() => {
+        clusterDropdownRef.current.open();
+      }, 100);
+    }
+  };
 
 
   const loadData = async (pageNumber = 1, isRefresh = false, overrideFilters = null) => {
     if (pageNumber === 1) {
-      if (!isRefresh) setLoading(true);
+      if (!isRefresh) {
+        setLoading(true);
+        setData([]);
+      }
     }
     
     try {
@@ -136,11 +210,11 @@ const SiteListReportScreen = ({ navigation }) => {
         limit: 20,
         site_id: currentFilters.siteId,
         site_name: currentFilters.siteName,
-        state: currentFilters.state,
-        district: currentFilters.district,
-        cluster: currentFilters.cluster,
+        state_id: currentFilters.state_id,
+        dist_id: currentFilters.dist_id,
+        cluster_id: currentFilters.cluster_id,
         site_type: currentFilters.siteType,
-        client: currentFilters.client
+        client_id: currentFilters.client_id
       };
 
       Object.keys(params).forEach(key => !params[key] && delete params[key]);
@@ -167,16 +241,13 @@ const SiteListReportScreen = ({ navigation }) => {
 
       // Since backend doesn't provide total DG/Non-DG counts in the paginated API,
       // we will use the exact values for the 14920 dataset, otherwise proportionally estimate them
-      let dgCount = resp.total_dg || resp.dg_sites || resp.dg_count || resp.dg_total;
-      let nonDgCount = resp.total_non_dg || resp.non_dg_sites || resp.non_dg_count || resp.nondg_total;
+      let dgCount = resp.dg_sites ?? resp.dg_count ?? resp.dg_total ?? resp.total_dg;
+      let nonDgCount = resp.non_dg_sites ?? resp.non_dg_count ?? resp.nondg_total ?? resp.total_non_dg;
       
       if (dgCount === undefined && nonDgCount === undefined) {
-         if (resp.total_records === 14920) {
-            dgCount = 9400;
-            nonDgCount = 5520;
-         } else if (resp.total_records > 0) {
-            // Rough estimate: ~63% DG, ~37% Non-DG based on 9400/14920
-            dgCount = Math.round(resp.total_records * 0.63002);
+         if (resp.total_records !== undefined && resp.total_records > 0) {
+            // Rough estimate based on filtered records
+            dgCount = Math.round(resp.total_records * 0.63);
             nonDgCount = resp.total_records - dgCount;
          } else {
             dgCount = 0;
@@ -226,19 +297,14 @@ const SiteListReportScreen = ({ navigation }) => {
 
   const handleApplyFilters = () => {
     setShowFilters(false);
-    // Short timeout to let the UI hide the modal smoothly before heavy network/rendering
-    setTimeout(() => {
-      loadData(1);
-    }, 50);
+    loadData(1);
   };
 
   const handleResetFilters = () => {
-    const emptyFilters = { siteId: '', siteName: '', state: '', district: '', cluster: '', siteType: '', client: '' };
+    const emptyFilters = { siteId: '', siteName: '', state_id: '', dist_id: '', cluster_id: '', siteType: '', client_id: '' };
     setFilters(emptyFilters);
     setShowFilters(false);
-    setTimeout(() => {
-      loadData(1, false, emptyFilters);
-    }, 50);
+    loadData(1, false, emptyFilters);
   };
 
   const renderFilterInput = (key, placeholder) => (
@@ -289,7 +355,7 @@ const SiteListReportScreen = ({ navigation }) => {
 
         <View style={styles.grid}>
           <View style={styles.gridItem}>
-            <Text style={styles.gridLabel}>Client</Text>
+            <Text style={styles.gridLabel}>IME</Text>
             <Text style={styles.gridValue}>{client}</Text>
           </View>
           <View style={styles.gridItem}>
@@ -350,7 +416,7 @@ const SiteListReportScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <Header title="Site List Report" navigation={navigation} />
+      <Header title="Site List Report" navigation={navigation} showBack={true} />
       
       {/* Stats Row */}
       <View style={styles.statsRow}>
@@ -387,36 +453,40 @@ const SiteListReportScreen = ({ navigation }) => {
         <View style={[styles.filtersContainer, { zIndex: 10, elevation: 10 }]}>
           <ScrollView contentContainerStyle={styles.filterScroll}>
             <View style={styles.filterGrid}>
-              <CustomDropdown
-                label="Client"
-                placeholder="All Clients"
-                value={filters.client}
-                options={dropdownOptions.clients}
-                onSelect={(val) => setFilters(prev => ({...prev, client: val}))}
-              />
+              {userRole === 'superadmin' && (
+                <CustomDropdown
+                  label="IME"
+                  placeholder="All IME"
+                  value={filters.client_id}
+                  options={dropdownOptions.clients}
+                  onSelect={(val) => setFilters(prev => ({...prev, client_id: val}))}
+                />
+              )}
               {renderFilterInput('siteId', 'Site ID')}
               {renderFilterInput('siteName', 'Site Name')}
               
               <CustomDropdown
                 label="State"
                 placeholder="All States"
-                value={filters.state}
+                value={filters.state_id}
                 options={dropdownOptions.states}
-                onSelect={(val) => setFilters(prev => ({...prev, state: val}))}
+                onSelect={handleStateSelect}
               />
               <CustomDropdown
                 label="District"
                 placeholder="All Districts"
-                value={filters.district}
+                value={filters.dist_id}
                 options={dropdownOptions.districts}
-                onSelect={(val) => setFilters(prev => ({...prev, district: val}))}
+                onSelect={handleDistrictSelect}
+                ref={distDropdownRef}
               />
               <CustomDropdown
                 label="Cluster"
                 placeholder="All Clusters"
-                value={filters.cluster}
+                value={filters.cluster_id}
                 options={dropdownOptions.clusters}
-                onSelect={(val) => setFilters(prev => ({...prev, cluster: val}))}
+                onSelect={(val) => setFilters(prev => ({...prev, cluster_id: val}))}
+                ref={clusterDropdownRef}
               />
               <CustomDropdown
                 label="Site Type"

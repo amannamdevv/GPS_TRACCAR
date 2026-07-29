@@ -56,6 +56,7 @@ const TrackingScreen = ({ route, navigation }) => {
         .leaflet-popup-content-wrapper { background: rgba(20, 20, 20, 0.85); color: #fff; border-radius: 8px; padding: 0; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         .leaflet-popup-content { margin: 12px; font-size: 11px; line-height: 1.5; font-family: sans-serif; white-space: pre-wrap; }
         .leaflet-popup-tip { background: rgba(20, 20, 20, 0.85); }
+        .leaflet-control-attribution { display: none !important; }
       </style>
     </head>
     <body>

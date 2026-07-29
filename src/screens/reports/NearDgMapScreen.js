@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, Dimensions, TextInput, FlatList
+  ActivityIndicator, Alert, Dimensions, TextInput, FlatList, Modal
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -20,6 +20,7 @@ const generateMapHtml = () => {
   <style>
     body, html { margin: 0; padding: 0; height: 100%; width: 100%; background-color: #f8fafc; font-family: -apple-system, sans-serif; }
     #map { height: 100%; width: 100%; z-index: 1; }
+    .leaflet-control-attribution { display: none !important; }
     .dev-popup { font-family: -apple-system, sans-serif; padding: 2px; }
     .dev-popup-title { font-size: 13px; font-weight: 800; color: #0f172a; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #e2e8f0; }
     .dev-popup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
@@ -58,6 +59,7 @@ const generateMapHtml = () => {
       doubleClickZoom: true,
       touchZoom: true,
       scrollWheelZoom: true,
+      attributionControl: false,
       minZoom: 5,
       maxZoom: 18,
       maxBounds: [[6.0, 68.0], [37.5, 97.5]],
@@ -130,13 +132,26 @@ const generateMapHtml = () => {
 
           // Center site marker + radius circle
           var siteCenter = null;
-          if (data.center && data.center.latitude && data.center.longitude) {
-             siteCenter = [data.center.latitude, data.center.longitude];
-             var icon = createTowerIcon(false, data.center);
-             var m = L.marker([data.center.latitude, data.center.longitude], { icon: icon, zIndexOffset: 999 }).addTo(map);
-             m.bindPopup("<div class='dev-popup'><div class='dev-popup-title' style='color:#94a3b8'>&#128333; " + (data.center.site_name || 'Site') + "</div></div>");
-             markers.push(m);
-             bounds.extend([data.center.latitude, data.center.longitude]);
+             if (data.center && data.center.latitude && data.center.longitude) {
+                siteCenter = [data.center.latitude, data.center.longitude];
+                var icon = createTowerIcon(false, data.center);
+                var m = L.marker([data.center.latitude, data.center.longitude], { icon: icon, zIndexOffset: 999 }).addTo(map);
+                
+                var sitePopupHtml = 
+                  "<div class='dev-popup' style='min-width: 150px;'>" +
+                    "<div class='dev-popup-title' style='color:#fff; background:#1e293b; padding:8px; border-radius:4px 4px 0 0; margin:-2px -2px 8px -2px;'>" + (data.center.site_name || 'Site') + "</div>" +
+                    "<div class='dev-popup-grid' style='grid-template-columns: auto auto; padding: 0 4px; gap: 4px; align-items: center;'>" +
+                      "<div class='dev-lbl' style='text-transform: none;'>Site ID</div><div class='dev-val' style='text-align: right;'>" + (data.center.site_id || 'N/A') + "</div>" +
+                      "<div class='dev-lbl' style='text-transform: none; color: #ef4444;'>Radius</div><div class='dev-val' style='text-align: right; color: #ef4444;'>" + (data.radius || 0) + " <span style='font-size:8px'>km</span></div>" +
+                      "<div class='dev-lbl' style='text-transform: none;'>DGs Found</div><div class='dev-val' style='text-align: right;'>" + (data.center.dgs_found || 0) + "</div>" +
+                      "<div class='dev-lbl' style='text-transform: none;'>Online <span style='color:#10b981'>●</span></div><div class='dev-val' style='text-align: right;'>" + (data.center.online_count || 0) + "</div>" +
+                      "<div class='dev-lbl' style='text-transform: none;'>Offline <span style='color:#ef4444'>●</span></div><div class='dev-val' style='text-align: right;'>" + (data.center.offline_count || 0) + "</div>" +
+                    "</div>" +
+                  "</div>";
+                m.bindPopup(sitePopupHtml);
+                
+                markers.push(m);
+                bounds.extend([data.center.latitude, data.center.longitude]);
              
              if (data.radius && data.radius > 0 && !radiusCircle) {
                 radiusCircle = L.circle([data.center.latitude, data.center.longitude], { color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.1, radius: data.radius * 1000, weight: 1, dashArray: '5,5' }).addTo(map);
@@ -151,7 +166,7 @@ const generateMapHtml = () => {
                 if (!d.latitude || !d.longitude) return;
 
                 var isOnline = (String(d.status).toLowerCase() === 'online');
-                var color = isOnline ? '#10b981' : (String(d.status).toLowerCase() === 'offline' ? '#ef4444' : '#f59e0b');
+                var color = isOnline ? '#10b981' : '#ef4444';
                 var pulse = isOnline ? '<style>@keyframes ping{0%{transform:scale(1);opacity:0.6}100%{transform:scale(2);opacity:0}}</style><div style="position:absolute;width:40px;height:40px;border-radius:50%;border:2px solid ' + color + ';animation:ping 1.6s ease-out infinite;top:0;left:0;"></div>' : '';
                 var bob = isOnline ? 'animation:bob 1.6s ease-in-out infinite;' : '';
                 
@@ -183,8 +198,10 @@ const generateMapHtml = () => {
                 var updatedStr = d.position_time ? new Date(d.position_time).toLocaleString() : 'N/A';
 
                 // Status badge
-                var st = (d.status || 'unknown').toLowerCase();
-                var stBadge = '<span class="badge badge-' + st + '">' + st.toUpperCase() + '</span>';
+                var isStOnline = (String(d.status).toLowerCase() === 'online');
+                var stBadge = isStOnline 
+                  ? '<span class="badge badge-online">ONLINE</span>' 
+                  : '<span class="badge badge-offline">OFFLINE</span>';
 
                 // DG Status badge
                 var dgOn = d.dg_status === 1 || d.dg_status === '1' || String(d.dg_status).toUpperCase() === 'ON' || d.dg_status === true || d.ignition === 1;
@@ -202,19 +219,20 @@ const generateMapHtml = () => {
                 // IMEI
                 var imeiStr = d.gps_imei || d.uniqueId || d.uniqueid || d.imei || 'N/A';
 
-                // Device name
                 var devName = d.name || d.dg_name || d.device_name || ('Device #' + d.deviceid);
+                var siteName = (d.site && d.site.site_name) ? d.site.site_name : (d.site_name || 'N/A');
 
                 var popupHtml =
-                  "<div class='dev-popup'>" +
-                  "<div class='dev-popup-title'>&#128225; " + devName + "</div>" +
-                  "<div class='dev-popup-grid'>" +
-                    "<div class='dev-field full'><div class='dev-lbl'>IMEI</div><div class='dev-val' style='color:#94a3b8;font-size:11px'>" + imeiStr + "</div></div>" +
-                    "<div class='dev-field'><div class='dev-lbl'>Status</div><div class='dev-val'>" + stBadge + "</div></div>" +
-                    "<div class='dev-field'><div class='dev-lbl'>DG Status</div><div class='dev-val'>" + dgBadge + "</div></div>" +
-                    "<div class='dev-field'><div class='dev-lbl'>Speed</div><div class='dev-val'>" + speedStr + "</div></div>" +
-                    "<div class='dev-field'><div class='dev-lbl'>Motion</div><div class='dev-val'>" + motionStr + "</div></div>" +
-                    "<div class='dev-field full'><div class='dev-lbl'>Last Updated</div><div class='dev-val' style='color:#64748b;font-size:10px'>" + updatedStr + "</div></div>" +
+                  "<div class='dev-popup' style='min-width: 170px;'>" +
+                  "<div class='dev-popup-title' style='color:#fff; background:#1e293b; padding:8px; border-radius:4px 4px 0 0; margin:-2px -2px 8px -2px;'>" + devName + "</div>" +
+                  "<div class='dev-popup-grid' style='grid-template-columns: auto auto; padding: 0 4px; gap: 6px; align-items: start;'>" +
+                    "<div class='dev-lbl' style='text-transform: none;'>Status</div><div class='dev-val' style='text-align: right;'>" + stBadge + "</div>" +
+                    "<div class='dev-lbl' style='text-transform: none;'>DG</div><div class='dev-val' style='text-align: right;'>" + (dgOn ? 'ON' : 'OFF') + "</div>" +
+                    "<div class='dev-lbl' style='text-transform: none;'>Distance</div><div class='dev-val' style='text-align: right; color: #f59e0b;'>" + (d.distance || '0') + " km</div>" +
+                    "<div class='dev-lbl' style='text-transform: none;'>Site Name</div><div class='dev-val' style='text-align: right; word-break: break-word; font-size:10px; line-height:1.2'>" + siteName + "</div>" +
+                    "<div class='dev-lbl' style='text-transform: none;'>IMEI</div><div class='dev-val' style='text-align: right; font-size:10px'>" + imeiStr + "</div>" +
+                    "<div class='dev-lbl' style='text-transform: none;'>Motion</div><div class='dev-val' style='text-align: right;'>" + (motionOn ? 'Yes' : 'No') + "</div>" +
+                    "<div class='dev-lbl' style='text-transform: none;'>Address</div><div class='dev-val' style='text-align: right; font-size:9px; line-height:1.2'>" + (d.address || 'N/A') + "</div>" +
                   "</div>" +
                   "</div>";
 
@@ -286,6 +304,38 @@ const generateMapHtml = () => {
 </html>
 `;
 };
+
+const DropdownFilter = ({ label, value, options, onSelect }) => {
+  const [visible, setVisible] = useState(false);
+  
+  return (
+    <View style={{ flex: 1 }}>
+      <Text style={styles.label}>{label}</Text>
+      <TouchableOpacity 
+        style={[styles.input, { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#f1f5f9', paddingVertical: 10, paddingHorizontal: 10 }]} 
+        onPress={() => setVisible(true)}
+      >
+        <Text style={{ fontSize: 13, color: '#0f172a', fontWeight: '500' }}>{value}</Text>
+        <Icon name="chevron-down" size={16} color="#64748b" />
+      </TouchableOpacity>
+      
+      <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
+        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} activeOpacity={1} onPress={() => setVisible(false)}>
+          <View style={{ width: '80%', backgroundColor: '#fff', borderRadius: 8, padding: 8, elevation: 5 }}>
+            <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#1e293b', padding: 12, borderBottomWidth: 1, borderBottomColor: '#f1f5f9', marginBottom: 8 }}>Select {label}</Text>
+            {options.map(opt => (
+              <TouchableOpacity key={opt} style={{ padding: 12, borderRadius: 4, backgroundColor: value === opt ? '#f1f5f9' : '#fff', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }} onPress={() => { onSelect(opt); setVisible(false); }}>
+                <Text style={{ fontSize: 14, color: value === opt ? '#1a3a6b' : '#334155', fontWeight: value === opt ? 'bold' : 'normal' }}>{opt}</Text>
+                {value === opt && <Icon name="check" size={16} color="#1a3a6b" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </View>
+  );
+};
+
 const StatCard = ({ icon, color, title, value, bgColor }) => (
   <View style={[styles.statCard, { borderLeftColor: color, borderLeftWidth: 3 }]}>
     <View style={[styles.statIconWrap, { backgroundColor: bgColor }]}>
@@ -304,6 +354,8 @@ const NearDgMapScreen = ({ route, navigation }) => {
   const { site_id, site_name, latitude, longitude } = route.params || {};
   const [loading, setLoading] = useState(false);
   const [radius, setRadius] = useState('10');
+  const [ignitionFilter, setIgnitionFilter] = useState('All');
+  const [motionFilter, setMotionFilter] = useState('All');
   const [mapTouched, setMapTouched] = useState(false);
 
   const [reportData, setReportData] = useState(null);
@@ -313,8 +365,10 @@ const NearDgMapScreen = ({ route, navigation }) => {
 
 
 
-  const loadData = async (radiusOverride) => {
+  const loadData = async (radiusOverride, igOverride, moOverride) => {
     const rad = radiusOverride !== undefined ? radiusOverride : radius;
+    const igFilter = igOverride !== undefined ? igOverride : ignitionFilter;
+    const moFilter = moOverride !== undefined ? moOverride : motionFilter;
     if (!site_id) {
       Alert.alert('Warning', 'No Site ID provided.');
       return;
@@ -333,7 +387,7 @@ const NearDgMapScreen = ({ route, navigation }) => {
       while (hasMore) {
         const resp = await fetchNearbyDg({
           site_id: site_id,
-          radius: rad,
+          radius: parseInt(rad) || 5,
           page: p,
           limit: 100
         });
@@ -349,20 +403,47 @@ const NearDgMapScreen = ({ route, navigation }) => {
         }
       }
 
+      const filteredDgs = allDgs.filter(d => {
+         let pass = true;
+         if (igFilter !== 'All') {
+            const igVal = igFilter === 'ON' ? 1 : 0;
+            const isDgOn = (d.ignition === 1 || d.ignition === '1' || d.dg_status === 1 || d.dg_status === '1' || String(d.dg_status).toUpperCase() === 'ON');
+            const dIg = isDgOn ? 1 : 0;
+            if (dIg !== igVal) pass = false;
+         }
+         if (moFilter !== 'All') {
+            const moVal = moFilter === 'Moving' ? 1 : 0;
+            const isMoving = (d.motion === 1 || d.motion === '1');
+            const dMo = isMoving ? 1 : 0;
+            if (dMo !== moVal) pass = false;
+         }
+         return pass;
+      });
+
       setReportData(rData);
-      setDgList(allDgs);
+      setDgList(filteredDgs);
 
       if (webviewRef.current) {
+        let onlineCount = 0;
+        let offlineCount = 0;
+        filteredDgs.forEach(d => {
+          if ((d.status || '').toLowerCase() === 'online') onlineCount++;
+          else offlineCount++;
+        });
+
         const payload = JSON.stringify({
           type: 'PLOT',
           center: {
             latitude: parseFloat(latitude || rData?.site?.latitude || 0),
             longitude: parseFloat(longitude || rData?.site?.longitude || 0),
             site_id: site_id,
-            site_name: site_name || rData?.site?.site_name || 'Site'
+            site_name: site_name || rData?.site?.site_name || 'Site',
+            dgs_found: filteredDgs.length,
+            online_count: onlineCount,
+            offline_count: offlineCount
           },
           radius: rad,
-          devices: allDgs
+          devices: filteredDgs
         });
         webviewRef.current.postMessage(payload);
       }
@@ -412,7 +493,7 @@ const NearDgMapScreen = ({ route, navigation }) => {
 
   useEffect(() => {
     if (site_id) {
-      loadData('10');
+      loadData('5');
     }
   }, [site_id]);
 
@@ -427,9 +508,9 @@ const NearDgMapScreen = ({ route, navigation }) => {
             {item.dg_name || 'Unknown DG'}
             <Text style={{ color: '#94a3b8', fontWeight: '400', fontSize: 12 }}>  (ID: {item.deviceid || 'N/A'})</Text>
           </Text>
-          <View style={[styles.badge, { backgroundColor: item.status === 'online' ? '#d1fae5' : '#f1f5f9' }]}>
-            <Text style={[styles.badgeText, { color: item.status === 'online' ? '#16a34a' : '#64748b' }]}>
-              {String(item.status || 'unknown').toUpperCase()}
+          <View style={[styles.badge, { backgroundColor: item.status === 'online' ? '#d1fae5' : '#fee2e2' }]}>
+            <Text style={[styles.badgeText, { color: item.status === 'online' ? '#16a34a' : '#dc2626' }]}>
+              {item.status === 'online' ? 'ONLINE' : 'OFFLINE'}
             </Text>
           </View>
         </View>
@@ -455,6 +536,12 @@ const NearDgMapScreen = ({ route, navigation }) => {
           <View style={{ flex: 1 }}>
             <Text style={styles.cardLabel}>GPS IMEI</Text>
             <Text style={styles.cardValue}>{item.gps_imei || 'N/A'}</Text>
+          </View>
+          <View style={{ flex: 1, alignItems: 'center' }}>
+            <Text style={styles.cardLabel}>MOTION</Text>
+            <Text style={[styles.cardValue, { color: (item.motion === 1 || item.motion === '1' || item.motion_status === 1 || item.motion_status === '1' || item.motion_status === true) ? '#3b82f6' : '#ca8a04', fontWeight: 'bold' }]}>
+              {(item.motion === 1 || item.motion === '1' || item.motion_status === 1 || item.motion_status === '1' || item.motion_status === true) ? 'Moving' : 'Stopped'}
+            </Text>
           </View>
           <View style={{ flex: 1, alignItems: 'flex-end' }}>
             <Text style={styles.cardLabel}>DG STATUS</Text>
@@ -498,11 +585,14 @@ const NearDgMapScreen = ({ route, navigation }) => {
             <View style={{ flex: 1 }}>
               <Text style={styles.label}>SEARCH RADIUS</Text>
               <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', paddingVertical: 0 }]}>
-                <TouchableOpacity onPress={() => {
-                  const newRad = Math.max(5, parseInt(radius || 0) - 5).toString();
-                  setRadius(newRad);
-                  loadData(newRad);
-                }} style={{ padding: 10 }}>
+                <TouchableOpacity 
+                  disabled={parseInt(radius || 0) <= 10}
+                  onPress={() => {
+                    const newRad = Math.max(10, parseInt(radius || 0) - 5).toString();
+                    setRadius(newRad);
+                  }} 
+                  style={{ padding: 10, opacity: parseInt(radius || 0) <= 10 ? 0.3 : 1 }}
+                >
                   <Icon name="minus" size={16} color="#64748b" />
                 </TouchableOpacity>
                 <TextInput
@@ -514,21 +604,55 @@ const NearDgMapScreen = ({ route, navigation }) => {
                     if (!isNaN(num) && num > 150) setRadius('150');
                     else setRadius(val);
                   }}
+                  onBlur={() => {
+                    let num = parseInt(radius);
+                    if (isNaN(num) || num < 10) setRadius('10');
+                  }}
+                  onSubmitEditing={() => {
+                    let num = parseInt(radius);
+                    const finalRad = (isNaN(num) || num < 10) ? '10' : (num > 150 ? '150' : radius);
+                    setRadius(finalRad);
+                    handleApply();
+                  }}
                 />
                 <Text style={{ fontSize: 12, color: '#64748b', fontWeight: 'bold' }}>KM</Text>
-                <TouchableOpacity onPress={() => {
-                  const newRad = Math.min(150, parseInt(radius || 0) + 5).toString();
-                  setRadius(newRad);
-                  loadData(newRad);
-                }} style={{ padding: 10 }}>
+                <TouchableOpacity 
+                  disabled={parseInt(radius || 0) >= 150}
+                  onPress={() => {
+                    const newRad = Math.min(150, parseInt(radius || 0) + 5).toString();
+                    setRadius(newRad);
+                  }} 
+                  style={{ padding: 10, opacity: parseInt(radius || 0) >= 150 ? 0.3 : 1 }}
+                >
                   <Icon name="plus" size={16} color="#64748b" />
                 </TouchableOpacity>
               </View>
             </View>
           </View>
 
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 }}>
+            <DropdownFilter
+              label="IGNITION"
+              value={ignitionFilter}
+              options={['All', 'ON', 'OFF']}
+              onSelect={setIgnitionFilter}
+            />
+
+            <DropdownFilter
+              label="MOTION"
+              value={motionFilter}
+              options={['All', 'Moving', 'Stopped']}
+              onSelect={setMotionFilter}
+            />
+          </View>
+
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16, gap: 10 }}>
-            <TouchableOpacity style={[styles.applyBtn, { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1' }]} onPress={() => setRadius('10')}>
+            <TouchableOpacity style={[styles.applyBtn, { backgroundColor: '#f1f5f9', borderWidth: 1, borderColor: '#cbd5e1' }]} onPress={() => { 
+              setRadius('10'); 
+              setIgnitionFilter('All');
+              setMotionFilter('All');
+              loadData('10', 'All', 'All'); 
+            }}>
               <Icon name="refresh" size={16} color="#475569" style={{ marginRight: 4 }} />
               <Text style={[styles.applyBtnText, { color: '#475569' }]}>Reset</Text>
             </TouchableOpacity>
@@ -571,7 +695,39 @@ const NearDgMapScreen = ({ route, navigation }) => {
           onTouchEnd={() => setMapTouched(false)}
           onTouchCancel={() => setMapTouched(false)}
         >
-          <WebView ref={webviewRef} originWhitelist={['*']} source={mapSource} style={styles.webview} scrollEnabled={false} showsVerticalScrollIndicator={false} showsHorizontalScrollIndicator={false} />
+          <WebView 
+            ref={webviewRef} 
+            originWhitelist={['*']} 
+            source={mapSource} 
+            style={styles.webview} 
+            scrollEnabled={false} 
+            showsVerticalScrollIndicator={false} 
+            showsHorizontalScrollIndicator={false} 
+            onLoadEnd={() => {
+              if (reportData && dgList && webviewRef.current) {
+                let onlineCount = 0;
+                let offlineCount = 0;
+                dgList.forEach(d => {
+                  if ((d.status || '').toLowerCase() === 'online') onlineCount++;
+                  else offlineCount++;
+                });
+                webviewRef.current.postMessage(JSON.stringify({
+                  type: 'PLOT',
+                  center: {
+                    latitude: parseFloat(latitude || reportData?.site?.latitude || 0),
+                    longitude: parseFloat(longitude || reportData?.site?.longitude || 0),
+                    site_id: site_id,
+                    site_name: site_name || reportData?.site?.site_name || 'Site',
+                    dgs_found: dgList.length,
+                    online_count: onlineCount,
+                    offline_count: offlineCount
+                  },
+                  radius: radius,
+                  devices: dgList
+                }));
+              }
+            }}
+          />
           {loading && <View style={styles.mapLoading}><ActivityIndicator size="large" color="#1a3a6b" /><Text style={styles.mapLoadingText}>Fetching Nearby DGs...</Text></View>}
         </View>
 
@@ -592,7 +748,7 @@ const NearDgMapScreen = ({ route, navigation }) => {
 
   return (
     <View style={styles.container}>
-      <Header title="Near DG Report" navigation={navigation} />
+      <Header title="Near DG Report" navigation={navigation} showBack={true} />
       <FlatList
         data={dgList}
         keyExtractor={(item, index) => String(item.site_id || index) + index}

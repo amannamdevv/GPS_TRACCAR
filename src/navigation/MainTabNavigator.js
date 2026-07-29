@@ -110,7 +110,6 @@ const MainTabNavigator = () => {
     // Start services only when the user is authenticated and auth restoration is complete
     if (!isLoading && userToken) {
       AlertNotificationService.start();
-      UpdateChecker.checkForUpdate();
     } else {
       AlertNotificationService.stop();
     }

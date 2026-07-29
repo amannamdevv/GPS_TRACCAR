@@ -19,6 +19,7 @@ const generateMapHtml = () => `
   <style>
     body { margin:0; padding:0; background:#f5f5f5; font-family: 'Segoe UI', sans-serif; }
     #map { width: 100vw; height: 100vh; }
+    .leaflet-control-attribution { display: none !important; }
     .legend { position: absolute; bottom: 10px; right: 10px; z-index: 999; background: white; padding: 8px; border-radius: 6px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-size: 11px; display: flex; gap: 8px; flex-wrap: wrap; max-width: 70%; }
     .legend-row { display: flex; align-items: center; gap: 4px; font-weight: 600; color: #475569; }
     .dot { width: 12px; height: 12px; border-radius: 6px; }
@@ -66,6 +67,7 @@ const generateMapHtml = () => `
       doubleClickZoom: true,
       touchZoom: true,
       scrollWheelZoom: true,
+      attributionControl: false,
       minZoom: 5,
       maxZoom: 18,
       maxBounds: [[6.0, 68.0], [37.5, 97.5]],
@@ -372,11 +374,49 @@ const DgBySiteScreen = ({ route, navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [radius, setRadius] = useState('5');
+  const [siteType, setSiteType] = useState('All');
+  const [appliedSiteType, setAppliedSiteType] = useState('All');
   const [mapTouched, setMapTouched] = useState(false);
 
   const [reportData, setReportData] = useState(null);
   const [towersList, setTowersList] = useState([]);
   const webviewRef = useRef(null);
+
+  const filteredTowersList = towersList.filter(t => {
+    if (appliedSiteType === 'All') return true;
+    const st = t.site_type ? t.site_type.toUpperCase().trim() : '';
+    const isDg = st.includes('DG') && !st.includes('NON');
+    if (appliedSiteType === 'DG') return isDg;
+    if (appliedSiteType === 'Non DG') return !isDg && st !== '';
+    return true;
+  });
+
+  useEffect(() => {
+    if (reportData && webviewRef.current) {
+      setTimeout(() => {
+        if (webviewRef.current) {
+          webviewRef.current.postMessage(JSON.stringify({
+            type: 'PLOT',
+            devices: (reportData.devices || []).map(d => ({
+              latitude:      d.latitude,
+              longitude:     d.longitude,
+              deviceid:      d.id || d.deviceid,
+              name:          d.name || d.dg_name || d.device_name || '',
+              gps_imei:      d.gps_imei || '',
+              uniqueId:      d.uniqueId || d.uniqueid || d.imei || '',
+              status:        d.status || 'unknown',
+              dg_status:     d.dg_status,
+              motion_status: d.motion_status,
+              speed:         d.speed,
+              position_time: d.position_time,
+            })),
+            towers: filteredTowersList,
+            radius: parseFloat(radius) || 10
+          }));
+        }
+      }, 500);
+    }
+  }, [reportData, appliedSiteType, radius]);
 
   useEffect(() => {
     const getDevices = async () => {
@@ -403,7 +443,7 @@ const DgBySiteScreen = ({ route, navigation }) => {
              
              // Trigger loadData on next tick so state has time to settle
              setTimeout(() => {
-                loadData(found, '10');
+                loadData(found, '5');
              }, 300);
            }
         }
@@ -491,29 +531,6 @@ const DgBySiteScreen = ({ route, navigation }) => {
         baseResponse.towers = allTowers;
         setReportData(baseResponse);
         setTowersList(allTowers);
-
-        setTimeout(() => {
-          if (webviewRef.current) {
-            webviewRef.current.postMessage(JSON.stringify({
-              type: 'PLOT',
-              devices: (baseResponse.devices || []).map(d => ({
-                latitude:      d.latitude,
-                longitude:     d.longitude,
-                deviceid:      d.id || d.deviceid,
-                name:          d.name || d.dg_name || d.device_name || '',
-                gps_imei:      d.gps_imei || '',
-                uniqueId:      d.uniqueId || d.uniqueid || d.imei || '',
-                status:        d.status || 'unknown',
-                dg_status:     d.dg_status,
-                motion_status: d.motion_status,
-                speed:         d.speed,
-                position_time: d.position_time,
-              })),
-              towers: allTowers,
-              radius: parseFloat(radius) || 10
-            }));
-          }
-        }, 500);
       }
     } catch (err) {
       Alert.alert('Error', err.message);
@@ -523,12 +540,15 @@ const DgBySiteScreen = ({ route, navigation }) => {
   };
 
   const handleApply = () => {
+    setAppliedSiteType(siteType);
     loadData();
   };
 
   const handleReset = () => {
     // Clear everything — no auto load
     setRadius('5');
+    setSiteType('All');
+    setAppliedSiteType('All');
     setShowSuggestions(false);
     setSearchQuery('');
     setSelectedDevice(null);
@@ -543,7 +563,7 @@ const DgBySiteScreen = ({ route, navigation }) => {
   const renderStats = () => {
     if (!reportData) return null;
     let dgCount = 0; let nonDgCount = 0;
-    towersList.forEach(t => {
+    filteredTowersList.forEach(t => {
       const st = t.site_type ? t.site_type.toUpperCase().trim() : '';
       if (st.includes('DG') && !st.includes('NON')) dgCount++; else nonDgCount++;
     });
@@ -562,7 +582,7 @@ const DgBySiteScreen = ({ route, navigation }) => {
 
     return (
       <View style={styles.statsGrid}>
-        <StatCard title="Total Towers" value={towersList.length} icon="radio-tower" color="#1a3a6b" bgColor="#eff6ff" />
+        <StatCard title="Total Towers" value={filteredTowersList.length} icon="radio-tower" color="#1a3a6b" bgColor="#eff6ff" />
         <StatCard title="DG Devices" value={dgDevices} icon="truck" color="#7c3aed" bgColor="#ede9fe" />
         <StatCard title="Online" value={onlineDevs} icon="check-circle" color="#10b981" bgColor="#d1fae5" />
         <StatCard title="DG ON" value={dgOn} icon="power-plug" color="#eab308" bgColor="#fef08a" />
@@ -688,15 +708,41 @@ const DgBySiteScreen = ({ route, navigation }) => {
             </View>
           )}
 
+          <View style={[styles.row, { marginBottom: 12 }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.label}>Site Type</Text>
+              <View style={{ flexDirection: 'row', backgroundColor: '#f1f5f9', borderRadius: 6, padding: 4 }}>
+                {['All', 'DG', 'Non DG'].map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={{
+                      flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 4,
+                      backgroundColor: siteType === type ? '#fff' : 'transparent',
+                      elevation: siteType === type ? 1 : 0
+                    }}
+                    onPress={() => setSiteType(type)}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: siteType === type ? 'bold' : '600', color: siteType === type ? '#1a3a6b' : '#64748b' }}>
+                      {type}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          </View>
+
           <View style={styles.row}>
             <View style={{ flex: 1.5, marginRight: 10 }}>
               <Text style={styles.label}>Radius (km)</Text>
               <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', paddingVertical: 0, paddingHorizontal: 0 }]}>
-                <TouchableOpacity onPress={() => {
-                  const newRad = Math.max(5, parseInt(radius || 0) - 5).toString();
-                  setRadius(newRad);
-                  loadData(null, newRad);
-                }} style={{ padding: 10 }}>
+                <TouchableOpacity 
+                  disabled={parseInt(radius || 0) <= 5}
+                  onPress={() => {
+                    const newRad = Math.max(5, parseInt(radius || 0) - 5).toString();
+                    setRadius(newRad);
+                  }} 
+                  style={{ padding: 10, opacity: parseInt(radius || 0) <= 5 ? 0.3 : 1 }}
+                >
                   <Icon name="minus" size={16} color="#64748b" />
                 </TouchableOpacity>
                 <TextInput
@@ -708,14 +754,27 @@ const DgBySiteScreen = ({ route, navigation }) => {
                     if (!isNaN(num) && num > 30) setRadius('30');
                     else setRadius(val);
                   }}
+                  onBlur={() => {
+                    let num = parseInt(radius);
+                    if (isNaN(num) || num < 5) setRadius('5');
+                  }}
+                  onSubmitEditing={() => {
+                    let num = parseInt(radius);
+                    const finalRad = (isNaN(num) || num < 5) ? '5' : (num > 30 ? '30' : radius);
+                    setRadius(finalRad);
+                    handleApply();
+                  }}
                   placeholder="5"
                 />
                 <Text style={{ fontSize: 12, color: '#64748b', fontWeight: 'bold', marginRight: 5 }}>KM</Text>
-                <TouchableOpacity onPress={() => {
-                  const newRad = Math.min(30, parseInt(radius || 0) + 5).toString();
-                  setRadius(newRad);
-                  loadData(null, newRad);
-                }} style={{ padding: 10 }}>
+                <TouchableOpacity 
+                  disabled={parseInt(radius || 0) >= 30}
+                  onPress={() => {
+                    const newRad = Math.min(30, parseInt(radius || 0) + 5).toString();
+                    setRadius(newRad);
+                  }} 
+                  style={{ padding: 10, opacity: parseInt(radius || 0) >= 30 ? 0.3 : 1 }}
+                >
                   <Icon name="plus" size={16} color="#64748b" />
                 </TouchableOpacity>
               </View>
@@ -740,9 +799,9 @@ const DgBySiteScreen = ({ route, navigation }) => {
           {loading && <View style={styles.mapLoading}><ActivityIndicator size="large" color="#1a3a6b" /><Text style={styles.mapLoadingText}>Fetching All Towers...</Text></View>}
         </View>
 
-        {reportData && towersList.length > 0 && (
+        {reportData && filteredTowersList.length > 0 && (
           <View style={styles.listHeaderContainer}>
-            <Text style={styles.listTitle}>Showing {towersList.length} towers within {radius} km</Text>
+            <Text style={styles.listTitle}>Showing {filteredTowersList.length} towers within {radius} km</Text>
           </View>
         )}
       </View>
@@ -751,15 +810,15 @@ const DgBySiteScreen = ({ route, navigation }) => {
 
   const renderFooter = () => {
     if (!reportData) return <View style={{ height: 40 }} />;
-    if (towersList.length === 0 && !loading) return <View style={styles.emptyContainer}><Icon name="map-marker-off" size={48} color="#cbd5e1" /><Text style={styles.emptyText}>No towers found within {radius} km.</Text></View>;
+    if (filteredTowersList.length === 0 && !loading) return <View style={styles.emptyContainer}><Icon name="map-marker-off" size={48} color="#cbd5e1" /><Text style={styles.emptyText}>No towers found.</Text></View>;
     return <View style={{ height: 40 }} />;
   };
 
   return (
     <View style={styles.container}>
-      <Header title="DG By Site Report" navigation={navigation} />
+      <Header title="DG By Site Report" navigation={navigation} showBack={true} />
       <FlatList
-        data={towersList}
+        data={filteredTowersList}
         keyExtractor={(item, index) => String(item.site_id || index) + index}
         renderItem={renderTowerCard}
         ListHeaderComponent={renderHeader()}

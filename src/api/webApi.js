@@ -606,9 +606,18 @@ export const fetchFilterDropdowns = async (clientId = null, stateId = null, dist
 };
 
 // ─── fetchDgDashboard ────────────────────────────────────────────────────────
-export const fetchDgDashboard = async () => {
+export const fetchDgDashboard = async (options = {}) => {
   try {
-    const resp = await webApi.get('/dg_dashboard/', { timeout: 15000 });
+    const params = {};
+    if (options.client_id) params.client_id = options.client_id;
+    if (options.state_id) params.state_id = options.state_id;
+    if (options.district_id) params.dist_id = options.district_id;
+    if (options.cluster_id) params.cluster_id = options.cluster_id;
+    
+    const resp = await webApi.get('/dg_dashboard/', { 
+      params,
+      timeout: 15000 
+    });
     return resp.data || { top_moving: [], top_idle: [] };
   } catch (e) {
     console.warn('[fetchDgDashboard]', e.message);
@@ -624,7 +633,7 @@ export const fetchDgDashboardTop10 = async (options = {}) => {
     if (options.to_date) params.to_date = options.to_date;
     if (options.client_id) params.client_id = options.client_id;
     if (options.state_id) params.state_id = options.state_id;
-    if (options.district_id) params.district_id = options.district_id;
+    if (options.district_id) params.dist_id = options.district_id;
     if (options.cluster_id) params.cluster_id = options.cluster_id;
     
     const resp = await webApi.get('/dg_dashboard_top10_api/', { 
@@ -658,7 +667,7 @@ export const fetchDgDeviceDetail = async () => {
 // ─── fetchLiveVoltageStatus ──────────────────────────────────────────────────
 export const fetchLiveVoltageStatus = async (options = {}) => {
   try {
-    const resp = await webApi.get('/dg_device_voltage_api/', options);
+    const resp = await webApi.get('/dg_current_device_voltage_api/', options);
     return resp.data;
   } catch (e) {
     console.warn('[fetchLiveVoltageStatus]', e.message);

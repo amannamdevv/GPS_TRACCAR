@@ -370,7 +370,10 @@ const CompactDonut = ({ total, dataEntries, title, activeFilter, onFilterSelect,
               activeOpacity={0.7}
             >
               <View style={[styles.compactLegendDot, { backgroundColor: seg.color }]} />
-              <Text style={styles.compactLegendLabel}>{seg.label}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.compactLegendLabel, { flex: undefined }]}>{seg.label}</Text>
+                {seg.subLabel ? <Text style={{ fontSize: 9, color: '#94a3b8', marginTop: 1, fontWeight: '600' }}>{seg.subLabel}</Text> : null}
+              </View>
               <Text style={[styles.compactLegendVal, { color: seg.color }]}>{seg.val}</Text>
             </TouchableOpacity>
           );
@@ -655,8 +658,8 @@ const DashboardScreen = ({ navigation }) => {
         let voltage = parseFloat(item.adc1_voltage || "0");
         if (isNaN(voltage)) voltage = 0;
         if (voltage < 9.5) danger++;
-        else if (voltage >= 9.5 && voltage < 10.0) critical++;
-        else if (voltage >= 10.0) normal++;
+        else if (voltage >= 9.5 && voltage < 11.5) critical++;
+        else if (voltage >= 11.5) normal++;
         total++;
       }
     });
@@ -777,8 +780,13 @@ const DashboardScreen = ({ navigation }) => {
       setDevices(devs);
 
       const top10Params = { from_date: startDate, to_date: endDate };
-      const top10Resp = await fetchDgDashboardTop10(top10Params);
+      const [top10Resp, dgResp] = await Promise.all([
+        fetchDgDashboardTop10(top10Params),
+        fetchDgDashboard({})
+      ]);
+      
       setDgDashboardTop10Data(top10Resp || null);
+      setDgDashboardData(dgResp || null);
     } catch (e) {
       console.warn('[clearCascade]', e.message);
     } finally {
@@ -819,8 +827,13 @@ const DashboardScreen = ({ navigation }) => {
       setDevices(devs);
 
       const top10Params = { from_date: startDate, to_date: endDate, ...apiFilters };
-      const top10Resp = await fetchDgDashboardTop10(top10Params);
+      const [top10Resp, dgResp] = await Promise.all([
+        fetchDgDashboardTop10(top10Params),
+        fetchDgDashboard(apiFilters)
+      ]);
+      
       setDgDashboardTop10Data(top10Resp || null);
+      setDgDashboardData(dgResp || null);
     } catch (e) {
       console.warn('[applyCascade]', e.message);
     } finally {
@@ -1031,9 +1044,9 @@ const DashboardScreen = ({ navigation }) => {
               activeFilter={null}
               onFilterSelect={(filterKey) => navigation.navigate('DeviceTab', { screen: 'DevicesList', params: { voltageFilter: filterKey } })}
               dataEntries={[
-                { label: 'DANGER', val: voltageStats.danger, color: '#ef4444', filterKey: 'Danger' },
-                { label: 'CRITICAL', val: voltageStats.critical, color: '#f59e0b', filterKey: 'Critical' },
-                { label: 'NORMAL', val: voltageStats.normal, color: '#10b981', filterKey: 'Normal' },
+                { label: 'DANGER', subLabel: '0.0 - 9.4V', val: voltageStats.danger, color: '#ef4444', filterKey: 'Danger' },
+                { label: 'CRITICAL', subLabel: '9.5 - 11.4V', val: voltageStats.critical, color: '#f59e0b', filterKey: 'Critical' },
+                { label: 'NORMAL', subLabel: '11.5V & above', val: voltageStats.normal, color: '#10b981', filterKey: 'Normal' },
               ]}
             />
           </View>
@@ -1140,26 +1153,36 @@ const DashboardScreen = ({ navigation }) => {
           <View style={cStyles.panelHeader}>
             <Text style={cStyles.panelTitle}>Filter Devices</Text>
           </View>
-          {isSuperadmin && renderCascadeDropdown('Client', 'account-multiple-outline', 'client', selClient, dropdowns.clients,
-            (v) => { setSelClient(v); setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); },
-            () => { setSelClient(null); setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
-          )}
-          {renderCascadeDropdown('State', 'map-outline', 'state', selState, dropdowns.states,
-            (v) => { setSelState(v); setSelDistrict(null); setSelCluster(null); setSelDevice(null); },
-            () => { setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
-          )}
-          {renderCascadeDropdown('District', 'city-variant-outline', 'district', selDistrict, dropdowns.districts,
-            (v) => { setSelDistrict(v); setSelCluster(null); setSelDevice(null); },
-            () => { setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
-          )}
-          {renderCascadeDropdown('Cluster', 'hexagon-multiple-outline', 'cluster', selCluster, dropdowns.clusters,
-            (v) => { setSelCluster(v); setSelDevice(null); },
-            () => { setSelCluster(null); setSelDevice(null); }
-          )}
-          {renderCascadeDropdown('Device', 'car', 'device', selDevice, filteredDeviceOptions,
-            (v) => setSelDevice(v),
-            () => setSelDevice(null)
-          )}
+          {(() => {
+            const availableStates = (!isSuperadmin || selClient) ? dropdowns.states : [];
+            const availableDistricts = selState ? dropdowns.districts : [];
+            const availableClusters = selDistrict ? dropdowns.clusters : [];
+
+            return (
+              <>
+                {isSuperadmin && renderCascadeDropdown('Client', 'account-multiple-outline', 'client', selClient, dropdowns.clients,
+                  (v) => { setSelClient(v); setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); },
+                  () => { setSelClient(null); setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
+                )}
+                {renderCascadeDropdown('State', 'map-outline', 'state', selState, availableStates,
+                  (v) => { setSelState(v); setSelDistrict(null); setSelCluster(null); setSelDevice(null); },
+                  () => { setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
+                )}
+                {renderCascadeDropdown('District', 'city-variant-outline', 'district', selDistrict, availableDistricts,
+                  (v) => { setSelDistrict(v); setSelCluster(null); setSelDevice(null); },
+                  () => { setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
+                )}
+                {renderCascadeDropdown('Cluster', 'hexagon-multiple-outline', 'cluster', selCluster, availableClusters,
+                  (v) => { setSelCluster(v); setSelDevice(null); },
+                  () => { setSelCluster(null); setSelDevice(null); }
+                )}
+                {renderCascadeDropdown('Device', 'car', 'device', selDevice, filteredDeviceOptions,
+                  (v) => setSelDevice(v),
+                  () => setSelDevice(null)
+                )}
+              </>
+            );
+          })()}
 
           {/* Filter action buttons */}
           <View style={cStyles.buttonRow}>

@@ -443,6 +443,16 @@ class AlertNotificationService {
   async _sendNotification(payload) {
     if (!this._permissionGranted) return;
     try {
+      // Check user_settings for pushNotif preference
+      const settingsStr = await AsyncStorage.getItem('user_settings');
+      if (settingsStr) {
+        const settings = JSON.parse(settingsStr);
+        if (settings.pushNotif === false) {
+          console.log('[AlertService] pushNotif is disabled in settings, skipping notification');
+          return;
+        }
+      }
+
       await notifee.displayNotification({
         title: payload.title,
         body: payload.body,
@@ -465,8 +475,21 @@ class AlertNotificationService {
   }
 
   // ── TTS ───────────────────────────────────────────────────────────────────────
-  _speak(text) {
+  async _speak(text) {
     if (!text || !this._ttsReady) return;
+    
+    // Check user_settings for pushNotif preference
+    try {
+      const settingsStr = await AsyncStorage.getItem('user_settings');
+      if (settingsStr) {
+        const settings = JSON.parse(settingsStr);
+        if (settings.pushNotif === false) {
+          console.log('[AlertService] pushNotif is disabled, skipping TTS');
+          return;
+        }
+      }
+    } catch (e) {}
+
     const spaced = text.replace(/(\d)/g, '$1 ');
     try { Tts.stop(); setTimeout(() => Tts.speak(spaced), 400); } catch (_) { }
   }

@@ -43,14 +43,14 @@ const checkForUpdate = async () => {
     if (update && update.isNeeded) {
       Alert.alert(
         'Update Available',
-        `A new version (${latestVersion}) is available. Please update to enjoy the latest features.`,
+        'A new version of the app is available. Update now to enjoy the latest features.',
         [
           {
-            text: 'Later',
+            text: 'LATER',
             style: 'cancel',
           },
           {
-            text: 'Update',
+            text: 'UPDATE NOW',
             onPress: openPlayStore,
           },
         ],

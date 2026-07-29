@@ -6,6 +6,7 @@ import { AuthProvider, AuthContext } from './src/context/AuthContext';
 import { FilterProvider } from './src/context/FilterContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import AlertNotificationService from './src/services/AlertNotificationService';
+import UpdateModal from './src/components/UpdateModal';
 import UpdateChecker from './src/services/UpdateChecker';
 
 // ─── Inner component — AuthContext yahan available hai ────────────────────────
@@ -42,6 +43,7 @@ const App = () => {
       <AuthProvider>
         <FilterProvider>
           <AppInner />
+          <UpdateModal />
         </FilterProvider>
       </AuthProvider>
     </SafeAreaProvider>

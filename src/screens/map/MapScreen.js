@@ -129,6 +129,7 @@ const MapScreen = ({ navigation, route }) => {
         #map { height: 100vh; width: 100vw; background: #e8eaed; }
         .leaflet-popup-content-wrapper { background: #212121; color: #fff; border-radius: 8px; padding: 0; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
         .leaflet-popup-content { margin: 0; width: 220px !important; }
+        .leaflet-control-attribution { display: none !important; }
         .popup-header { padding: 10px 12px; background: #27272a; border-top-left-radius: 8px; border-top-right-radius: 8px; font-weight: bold; font-size: 13px; border-bottom: 1px solid #3f3f46; }
         .popup-body { padding: 10px 12px; font-size: 11px; }
         .popup-row { display: flex; justify-content: space-between; margin-bottom: 4px; }

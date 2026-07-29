@@ -49,7 +49,7 @@ const computeMileage = (points, targetTotalKm = 0) => {
     }
     miles.push(acc);
   }
-  
+
   // Scale the local running mileage to exactly match the API's total distance
   if (targetTotalKm > 0 && acc > 0) {
     const scale = targetTotalKm / acc;
@@ -94,7 +94,7 @@ const normalizePoint = (p) => {
   try {
     if (typeof p.attributes === 'string') attrs = JSON.parse(p.attributes);
     else if (typeof p.attributes === 'object') attrs = p.attributes;
-  } catch (e) {}
+  } catch (e) { }
 
   const isMoving = speedKmh > 2;
   const final_status = isMoving ? 'MOVE' : 'STOP';
@@ -303,28 +303,28 @@ const PlaybackScreen = ({ route, navigation }) => {
         getTripsReport(deviceId, fromDate, toDate)
       ]);
       if (signal.aborted) return;
-      
+
       let apiDist = 0;
       let apiMoveMs = 0;
       let apiStops = 0;
       trips.forEach(t => {
-         const st = (t.status || '').toUpperCase();
-         if (st === 'MOVE' || st === 'MOVING') {
-            apiDist += (t.distance || 0); // distance in meters
-            apiMoveMs += (t.duration || 0) * 1000; // duration in ms
-         }
-         if (st === 'STOP' || st === 'STOPPED') {
-            apiStops++;
-         }
+        const st = (t.status || '').toUpperCase();
+        if (st === 'MOVE' || st === 'MOVING') {
+          apiDist += (t.distance || 0); // distance in meters
+          apiMoveMs += (t.duration || 0) * 1000; // duration in ms
+        }
+        if (st === 'STOP' || st === 'STOPPED') {
+          apiStops++;
+        }
       });
       setApiSummary({
-         distance: (apiDist / 1000).toFixed(2),
-         moveMs: apiMoveMs,
-         stops: apiStops
+        distance: (apiDist / 1000).toFixed(2),
+        moveMs: apiMoveMs,
+        stops: apiStops
       });
 
       if (!raw || raw.length === 0) {
-        setLoadError('No GPS data found for the selected time range.');
+        setLoadError('No data found for the selected time range.');
         sendToMap('CLEAR_ALL');
         setLoading(false);
         return;
@@ -393,12 +393,12 @@ const PlaybackScreen = ({ route, navigation }) => {
           let minDist = Infinity;
           const tStartMs = moment(t.startTime).valueOf();
           for (let i = 0; i < points.length; i++) {
-             const pMs = moment(points[i].fixTime).valueOf();
-             const diff = Math.abs(pMs - tStartMs);
-             if (diff < minDist) {
-                minDist = diff;
-                closestIdx = i;
-             }
+            const pMs = moment(points[i].fixTime).valueOf();
+            const diff = Math.abs(pMs - tStartMs);
+            if (diff < minDist) {
+              minDist = diff;
+              closestIdx = i;
+            }
           }
           stopEventsRaw.push({
             lat: t.startLat,
@@ -452,7 +452,7 @@ const PlaybackScreen = ({ route, navigation }) => {
       // Draw full route on map
       const startMs = moment(points[0].fixTime).valueOf();
       const mapCoords = points.map((p, i) => ({
-        lat: p.latitude, lng: p.longitude, 
+        lat: p.latitude, lng: p.longitude,
         ms: moment(p.fixTime).valueOf() - startMs,
         spd: p.speedKmh, crs: p.course, mlg: miles[i],
         fixMs: moment(p.fixTime).valueOf()
@@ -552,7 +552,7 @@ const PlaybackScreen = ({ route, navigation }) => {
       if (msg.type === 'SYNC') {
         elapsedMsRef.current = msg.elapsed;
         const newIdx = msg.idx;
-        
+
         // Check for stops manually
         const stops = stopsRef.current;
         let hitStopIdx = -1;
@@ -562,13 +562,13 @@ const PlaybackScreen = ({ route, navigation }) => {
         if (hitStopIdx !== -1) {
           pausedStopsRef.current.add(hitStopIdx);
         }
-        
+
         if (newIdx !== lastGeoIndexRef.current) {
-           lastGeoIndexRef.current = newIdx;
-           setCurrentIndex(newIdx);
-           getCachedAddress(routePointsRef.current[newIdx].latitude, routePointsRef.current[newIdx].longitude).then(addr => {
-              if (addr) setCurrentAddress(addr);
-           });
+          lastGeoIndexRef.current = newIdx;
+          setCurrentIndex(newIdx);
+          getCachedAddress(routePointsRef.current[newIdx].latitude, routePointsRef.current[newIdx].longitude).then(addr => {
+            if (addr) setCurrentAddress(addr);
+          });
         }
         setLiveTel({
           speed: msg.tel.speed,
@@ -633,6 +633,7 @@ const PlaybackScreen = ({ route, navigation }) => {
     .pin{display:flex;align-items:center;justify-content:center;border-radius:50%;font-weight:800;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.7)}
     .leaflet-popup-content-wrapper{background:#ffffff!important;border:1px solid #e2e8f0!important;border-radius:10px!important;box-shadow:0 6px 16px rgba(0,0,0,0.15)!important;padding:0!important;}
     .leaflet-popup-tip{background:#ffffff!important;}
+    .leaflet-control-attribution { display: none !important; }
     .mk-popup{font-family:'Segoe UI',system-ui,sans-serif;min-width:160px;max-width:200px;padding:8px 12px;background:#ffffff;border-radius:10px;}
     .mk-popup .mk-title{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;padding-bottom:5px;border-bottom:1px solid #e2e8f0}
     .mk-popup .mk-title.start{color:#16a34a}
@@ -938,7 +939,7 @@ setTimeout(function(){
       {loadError !== '' && !loading && (
         <View style={s.noDataOverlay}>
           <Icon name="map-marker-off" size={60} color="#334155" />
-          <Text style={s.noDataTitle}>No Playback Data</Text>
+          {/* <Text style={s.noDataTitle}>No Playback Data</Text> */}
           <Text style={s.noDataText}>{loadError}</Text>
           <TouchableOpacity style={s.noDataBtn} onPress={() => { setTempTf(timeframe); setShowTimeModal(true); }}>
             <Text style={s.noDataBtnTxt}>Change Time Range</Text>
@@ -1093,30 +1094,30 @@ setTimeout(function(){
           {/* Controls & Speed */}
           <View style={s.playbackBar}>
             <View style={s.controls}>
-              <Pressable style={({pressed}) => [s.playBtnOutline, { marginRight: 10, backgroundColor: pressed ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)' }]} onPress={() => {
+              <Pressable style={({ pressed }) => [s.playBtnOutline, { marginRight: 10, backgroundColor: pressed ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)' }]} onPress={() => {
                 setIsPlaying(false);
                 seekTo(Math.max(0, currentIndex - 1));
               }}>
                 <Icon name="skip-previous" size={24} color="#6b7a90" />
               </Pressable>
 
-              <Pressable style={({pressed}) => [s.playBtn, pressed && { backgroundColor: '#c2410c', transform: [{scale: 0.95}] }]} onPress={() => {
-                  if (routePoints.length === 0) return;
-                  if (!isPlaying && currentIndex >= routePoints.length - 1) {
-                    seekTo(0);
-                    setTimeout(() => setIsPlaying(true), 60);
-                  } else {
-                    setIsPlaying(p => !p);
-                  }
-                }}>
+              <Pressable style={({ pressed }) => [s.playBtn, pressed && { backgroundColor: '#c2410c', transform: [{ scale: 0.95 }] }]} onPress={() => {
+                if (routePoints.length === 0) return;
+                if (!isPlaying && currentIndex >= routePoints.length - 1) {
+                  seekTo(0);
+                  setTimeout(() => setIsPlaying(true), 60);
+                } else {
+                  setIsPlaying(p => !p);
+                }
+              }}>
                 <Icon name={isPlaying ? 'pause' : 'play'} size={24} color="#fff" />
               </Pressable>
 
               <Pressable onPress={() => {
-                  setIsPlaying(false);
-                  if (animationRef.current) cancelAnimationFrame(animationRef.current);
-                  seekTo(Math.min(routePoints.length - 1, currentIndex + 1));
-              }} style={({pressed}) => [s.playBtnOutline, { marginLeft: 10, backgroundColor: pressed ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)' }]}>
+                setIsPlaying(false);
+                if (animationRef.current) cancelAnimationFrame(animationRef.current);
+                seekTo(Math.min(routePoints.length - 1, currentIndex + 1));
+              }} style={({ pressed }) => [s.playBtnOutline, { marginLeft: 10, backgroundColor: pressed ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)' }]}>
                 <Icon name="skip-next" size={24} color="#6b7a90" />
               </Pressable>
             </View>

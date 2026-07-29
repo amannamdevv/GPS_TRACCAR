@@ -420,7 +420,7 @@ const AlertsScreen = ({ navigation }) => {
 
       merged = deduplicateAlerts(merged);
       merged.sort((a, b) => (moment(getTime(b)).valueOf() || 0) - (moment(getTime(a)).valueOf() || 0));
-      merged = merged.slice(0, 500);
+      merged = merged.slice(0, 10000);
 
       await setJSON(CACHE.ALERTS, merged);
       // ── FIX: single setAlerts call at the very end — no mid-sync flicker ──
