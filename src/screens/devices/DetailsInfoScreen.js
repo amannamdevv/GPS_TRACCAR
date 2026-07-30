@@ -154,7 +154,7 @@ const DetailsInfoScreen = ({ route, navigation }) => {
           { label: 'District / Zone', value: val(src.district_name), icon: 'map-marker-radius' },
           { label: 'Cluster', value: val(src.cluster_name), icon: 'group' },
           { label: 'Site Name', value: val(src.site_name), icon: 'office-building' },
-          { label: 'Site ID', value: val(src.site_id), icon: 'qrcode' },
+          { label: 'Site ID', value: src.site_id ? `${src.site_id} (${src.site_distance != null ? parseFloat(src.site_distance).toFixed(2) + ' km' : (src.nearest_distance_m != null ? parseFloat(src.nearest_distance_m).toFixed(2) + ' km' : 'N/A')})` : val(src.nearest_indus_id), icon: 'qrcode' },
         ]} />
 
         {/* ── Telemetry & Status ──────────────────────── */}

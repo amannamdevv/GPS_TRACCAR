@@ -316,8 +316,9 @@ const MapScreen = ({ navigation, route }) => {
           var dgName = pos.name || 'N/A';
           var statusColor = getStatusColor(pos);
           
-          var nearestSite = pos.nearest_indus_id || 'N/A';
-          var nearestDist = pos.nearest_distance_m != null ? pos.nearest_distance_m + ' m' : '';
+          var nearestSite = pos.site_id || pos.nearest_indus_id || 'N/A';
+          var rawDist = pos.site_distance != null ? pos.site_distance : pos.nearest_distance_m;
+          var nearestDist = rawDist != null ? parseFloat(rawDist).toFixed(2) + ' km' : '';
           var nearestStr = nearestSite + (nearestDist ? ' (' + nearestDist + ')' : '');
           var voltage = pos.adc1 != null ? parseFloat(pos.adc1).toFixed(2) + ' V' : 'N/A';
 
@@ -554,8 +555,8 @@ const MapScreen = ({ navigation, route }) => {
           address: device.address || prevPosForDevice?.address || null,
           speedKmh: device.speedKmh ?? device.speed ?? 0,
           alarm: device.alarm ?? null,
-          nearest_indus_id: device.nearest_indus_id,
-          nearest_distance_m: device.nearest_distance_m,
+          site_id: device.site_id || device.nearest_indus_id,
+          site_distance: device.site_distance != null ? device.site_distance : device.nearest_distance_m,
           adc1: device.adc1,
         };
         
@@ -1049,9 +1050,11 @@ const MapScreen = ({ navigation, route }) => {
               Voltage : {positions[selectedDeviceId]?.adc1 != null ? parseFloat(positions[selectedDeviceId].adc1).toFixed(2) : (selectedDevice.adc1 != null ? parseFloat(selectedDevice.adc1).toFixed(2) : '0.00')} V
             </Text>
             <Text style={{ fontSize: 12, color: '#8b5cf6', fontWeight: '700' }}>
-              Nearest Site : {positions[selectedDeviceId]?.nearest_indus_id || selectedDevice.nearest_indus_id || 'N/A'} {
-                (positions[selectedDeviceId]?.nearest_distance_m != null || selectedDevice.nearest_distance_m != null) ? 
-                `(${positions[selectedDeviceId]?.nearest_distance_m ?? selectedDevice.nearest_distance_m} m)` : ''
+              Nearest Site : {positions[selectedDeviceId]?.site_id || positions[selectedDeviceId]?.nearest_indus_id || selectedDevice.site_id || selectedDevice.nearest_indus_id || 'N/A'} {
+                (() => {
+                  const dist = positions[selectedDeviceId]?.site_distance ?? positions[selectedDeviceId]?.nearest_distance_m ?? selectedDevice.site_distance ?? selectedDevice.nearest_distance_m;
+                  return dist != null ? `(${parseFloat(dist).toFixed(2)} km)` : '';
+                })()
               }
             </Text>
           </View>

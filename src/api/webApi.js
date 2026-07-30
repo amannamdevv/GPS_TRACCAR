@@ -92,8 +92,8 @@ const normalizeDeviceData = (rawData) => {
       ? (dev.dg_status === 1 || dev.dg_status === '1' || dev.dg_status === 'ON' || dev.dg_status === true ? 1 : 0)
       : (dev.ignition === 1 || dev.ignition === '1' || dev.ignition === true ? 1 : 0);
 
-    const nearest_indus_id = dev.nearest_indus_id ?? attrs.nearest_indus_id ?? attrs.nearestSite ?? null;
-    const nearest_distance_m = dev.nearest_distance_m ?? attrs.nearest_distance_m ?? attrs.nearestDistance ?? null;
+    const site_id = dev.site_id ?? dev.nearest_indus_id ?? attrs.site_id ?? attrs.nearest_indus_id ?? attrs.nearestSite ?? null;
+    const site_distance = dev.site_distance ?? dev.nearest_distance_m ?? attrs.site_distance ?? attrs.nearest_distance_m ?? attrs.nearestDistance ?? null;
     const adc1 = dev.adc1 ?? attrs.adc1 ?? attrs.voltage ?? null;
 
     return {
@@ -114,8 +114,10 @@ const normalizeDeviceData = (rawData) => {
       ignition_status: dev.ignition === 1 || dev.ignition === '1' || dev.ignition === true ? 1 : 0,
       rssi: dev.rssi ?? null,
       alarm: dev.alarm || null,
-      nearest_indus_id,
-      nearest_distance_m,
+      site_id,
+      site_distance,
+      nearest_indus_id: site_id,
+      nearest_distance_m: site_distance,
       adc1,
     };
   });

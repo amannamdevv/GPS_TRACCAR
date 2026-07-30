@@ -182,7 +182,13 @@ const DeviceCard = ({ device, onPress }) => {
           >
             <Icon name="factory" size={17} color="#60a5fa" />
             <Text style={[styles.telLabel, { color: '#60a5fa', fontWeight: 'bold' }]}>Site ID Report:</Text>
-            <Text style={[styles.telValue, { color: '#60a5fa', fontWeight: 'bold', textDecorationLine: 'underline' }]}>{device.nearest_indus_id || 'N/A'}</Text>
+            <Text style={[styles.telValue, { color: '#60a5fa', fontWeight: 'bold', textDecorationLine: 'underline' }]}>
+              {(() => {
+                const id = device.site_id || device.nearest_indus_id;
+                const dist = device.site_distance != null ? device.site_distance : device.nearest_distance_m;
+                return id ? `${id} (${dist != null ? parseFloat(dist).toFixed(2) + ' km' : 'N/A'})` : 'N/A';
+              })()}
+            </Text>
           </TouchableOpacity>
           {/* Moving Status */}
           <View style={styles.telItem}>

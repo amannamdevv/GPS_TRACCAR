@@ -508,7 +508,11 @@ const DgStatusLogScreen = ({ route, navigation }) => {
           <View style={[styles.telemetryItem, { flex: 1.5 }]}>
             <Icon name="transmission-tower" size={15} color="#64748b" />
             <Text style={styles.telemetryText} numberOfLines={2}>
-              {item.nearest_indus_id ? `${item.nearest_indus_id} (${item.nearest_distance_m != null ? item.nearest_distance_m + 'm' : 'N/A'})` : 'Tower N/A'}
+              {(() => {
+                const id = item.site_id || item.nearest_indus_id;
+                const dist = item.site_distance != null ? item.site_distance : item.nearest_distance_m;
+                return id ? `${id} (${dist != null ? parseFloat(dist).toFixed(2) + ' km' : 'N/A'})` : 'Tower N/A';
+              })()}
             </Text>
           </View>
         </View>

@@ -527,7 +527,11 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           <View style={[styles.telemetryItem, { flex: 1.5 }]}>
             <Icon name="transmission-tower" size={15} color="#64748b" />
             <Text style={styles.telemetryText} numberOfLines={2}>
-              {item.nearest_indus_id ? `${item.nearest_indus_id} (${item.nearest_distance_m != null ? item.nearest_distance_m + 'm' : 'N/A'})` : 'Tower N/A'}
+              {(() => {
+                const id = item.site_id || item.nearest_indus_id;
+                const dist = item.site_distance != null ? item.site_distance : item.nearest_distance_m;
+                return id ? `${id} (${dist != null ? parseFloat(dist).toFixed(2) + ' km' : 'N/A'})` : 'Tower N/A';
+              })()}
             </Text>
           </View>
         </View>
@@ -572,7 +576,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
               { label: '📍 Area / District', value: `${item.area || 'N/A'} / ${item.district || 'N/A'}` },
               { label: '🏫 Site Name / Type', value: `${item.site_name || 'N/A'} (${item.site_type || 'N/A'})` },
               // { label: '🔵 Current Indus ID', value: item.current_indus_id || 'N/A' },
-              // { label: '📏 Nearest Distance', value: item.nearest_distance_m != null ? `${item.nearest_distance_m} m` : 'N/A' },
+              // { label: '📏 Nearest Distance', value: (item.site_distance != null ? item.site_distance : item.nearest_distance_m) != null ? `${parseFloat(item.site_distance ?? item.nearest_distance_m).toFixed(2)} km` : 'N/A' },
               { label: '🗼 Indus ID (100m)', value: item.indus_id_within_100m || 'None' },
               { label: '📞 IME', value: item.ome_name_as_erp || 'N/A' },
               { label: '👤 AOM', value: `${item.aom_name || 'N/A'}${item.aom_number ? ` (${item.aom_number})` : ''}` },
