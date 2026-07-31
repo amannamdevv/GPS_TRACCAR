@@ -462,7 +462,7 @@ const DashboardScreen = ({ navigation }) => {
   const [selDevice, setSelDevice] = useState(globalDevice);
   const [dgDashboardData, setDgDashboardData] = useState(null);
   const [dgDashboardTop10Data, setDgDashboardTop10Data] = useState(null);
-  const [top10DateRange, setTop10DateRange] = useState('7days');
+  const [top10DateRange, setTop10DateRange] = useState('yesterday');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);

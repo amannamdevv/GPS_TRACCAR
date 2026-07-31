@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions, ActivityIndicator, ScrollView, Modal, FlatList, ToastAndroid, AppState } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions, ActivityIndicator, ScrollView, Modal, FlatList, ToastAndroid, AppState, RefreshControl } from 'react-native';
 import DatePicker from '../../components/CalendarPickerModal';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { fetchDgDailySummary, fetchDeviceList } from '../../api/webApi';
@@ -25,6 +25,21 @@ const formatSeconds = (totalSeconds) => {
 
    if (d > 0) return `${d}d ${h}h ${m}m`;
    return `${h}h ${m}m`;
+};
+
+const formatTimeStrWithDays = (timeStr) => {
+   if (!timeStr) return '00:00:00';
+   const parts = String(timeStr).split(':');
+   if (parts.length < 2) return '00:00:00';
+   const h = parseInt(parts[0], 10) || 0;
+   const m = parseInt(parts[1], 10) || 0;
+   const s = parts.length > 2 ? parseInt(parts[2], 10) : 0;
+   if (h >= 24) {
+      const d = Math.floor(h / 24);
+      const remH = h % 24;
+      return `${d}d ${String(remH).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+   }
+   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
 // ─── Custom Donut Component ──────────────────────────────────
@@ -119,6 +134,14 @@ const SummaryDashboard = ({ onBackToMap, onOpenDaily, onGoToDgReport, deviceName
    const [tooltipPos, setTooltipPos] = useState({ index: null, x: 0 });
    const [selectedDay, setSelectedDay] = useState(null);
    const [activeQuickDate, setActiveQuickDate] = useState('Yesterday');
+   const [refreshing, setRefreshing] = useState(false);
+   const [refreshKey, setRefreshKey] = useState(0);
+   
+   const onRefresh = useCallback(() => {
+      setRefreshing(true);
+      setRefreshKey(prev => prev + 1);
+      setTimeout(() => setRefreshing(false), 1500);
+   }, []);
    
    const handleQuickDate = (daysStr) => {
       setActiveQuickDate(daysStr);
@@ -186,6 +209,7 @@ const SummaryDashboard = ({ onBackToMap, onOpenDaily, onGoToDgReport, deviceName
 
       const loadData = async () => {
          setLoading(true);
+         setApiData([]); // Clear old data to prevent showing previous device's data
          try {
             const start = moment(fromDate).startOf('day');
             const end = moment(toDate).startOf('day');
@@ -261,7 +285,7 @@ const SummaryDashboard = ({ onBackToMap, onOpenDaily, onGoToDgReport, deviceName
             abortControllerRef.current.abort();
          }
       };
-   }, [fromDate, toDate, localDeviceId]);
+   }, [fromDate, toDate, localDeviceId, refreshKey]);
 
    // ─── Calculations ────────────────────────────────────────
    const totalDistance = apiData.reduce((acc, curr) => acc + (Number(curr.total_dg_move_km) || 0), 0).toFixed(2);
@@ -292,10 +316,15 @@ const SummaryDashboard = ({ onBackToMap, onOpenDaily, onGoToDgReport, deviceName
       const groupedDailyData = [];
       
       const formatTimeStr = (totalSeconds) => {
-         const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
-         const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
-         const s = (totalSeconds % 60).toString().padStart(2, '0');
-         return `${h}:${m}:${s}`;
+         const h = Math.floor(totalSeconds / 3600);
+         const m = Math.floor((totalSeconds % 3600) / 60);
+         const s = (totalSeconds % 60);
+         if (h >= 24) {
+            const d = Math.floor(h / 24);
+            const remH = h % 24;
+            return `${d}d ${String(remH).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+         }
+         return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
       };
 
       for (let i = 0; i < count; i++) {
@@ -486,6 +515,7 @@ const SummaryDashboard = ({ onBackToMap, onOpenDaily, onGoToDgReport, deviceName
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 30 }}
+            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1565C0']} />}
          >
             <View style={{ flex: 1 }}>
                {/* Date Pickers (Hidden modals) */}
@@ -817,18 +847,42 @@ const SummaryDashboard = ({ onBackToMap, onOpenDaily, onGoToDgReport, deviceName
                                     </View>
                                     <View style={styles.dayStatItem}>
                                        <Icon name="car" size={14} color="#10b981" />
-                                       <Text style={styles.dayStatVal}>{day.total_dg_move?.substring(0, 5) || '00:00'}</Text>
+                                       <Text style={styles.dayStatVal}>{formatTimeStrWithDays(day.total_dg_move)}</Text>
                                        <Text style={styles.dayStatLab}>Move</Text>
                                     </View>
                                     <View style={styles.dayStatItem}>
                                        <Icon name="timer-sand" size={14} color="#f59e0b" />
-                                       <Text style={styles.dayStatVal}>{day.total_dg_idle?.substring(0, 5) || '00:00'}</Text>
+                                       <Text style={styles.dayStatVal}>{formatTimeStrWithDays(day.total_dg_idle)}</Text>
                                        <Text style={styles.dayStatLab}>Idle</Text>
                                     </View>
                                     <View style={styles.dayStatItem}>
                                        <Icon name="stop-circle" size={14} color="#ef4444" />
-                                       <Text style={styles.dayStatVal}>{day.total_dg_stop?.substring(0, 5) || '00:00'}</Text>
+                                       <Text style={styles.dayStatVal}>{formatTimeStrWithDays(day.total_dg_stop)}</Text>
                                        <Text style={styles.dayStatLab}>Stop</Text>
+                                    </View>
+                                 </View>
+
+                                 {/* Second Stats Grid Row */}
+                                 <View style={[styles.dayStatsGrid, { borderTopWidth: 0, paddingTop: 6, paddingBottom: 6 }]}>
+                                    <View style={styles.dayStatItem}>
+                                       <Icon name="power" size={14} color="#0ea5e9" />
+                                       <Text style={styles.dayStatVal}>{formatTimeStrWithDays(day.total_dg_on)}</Text>
+                                       <Text style={styles.dayStatLab}>DG ON</Text>
+                                    </View>
+                                    <View style={styles.dayStatItem}>
+                                       <Icon name="power-off" size={14} color="#64748b" />
+                                       <Text style={styles.dayStatVal}>{formatTimeStrWithDays(day.total_dg_off)}</Text>
+                                       <Text style={styles.dayStatLab}>DG OFF</Text>
+                                    </View>
+                                    <View style={styles.dayStatItem}>
+                                       <Icon name="lightning-bolt" size={14} color="#8b5cf6" />
+                                       <Text style={styles.dayStatVal}>{day.start_adc1 != null ? parseFloat(day.start_adc1).toFixed(2) : '0.00'}</Text>
+                                       <Text style={styles.dayStatLab}>V Start</Text>
+                                    </View>
+                                    <View style={styles.dayStatItem}>
+                                       <Icon name="lightning-bolt-outline" size={14} color="#8b5cf6" />
+                                       <Text style={styles.dayStatVal}>{day.end_adc1 != null ? parseFloat(day.end_adc1).toFixed(2) : '0.00'}</Text>
+                                       <Text style={styles.dayStatLab}>V End</Text>
                                     </View>
                                  </View>
                               </TouchableOpacity>

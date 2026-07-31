@@ -54,6 +54,11 @@ const formatTime = (timeStr) => {
   const h = parseInt(parts[0], 10);
   const m = parseInt(parts[1], 10);
   const s = parts.length > 2 ? parseInt(parts[2], 10) : 0;
+  if (h >= 24) {
+    const d = Math.floor(h / 24);
+    const remH = h % 24;
+    return `${d}d ${String(remH).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
@@ -251,8 +256,8 @@ const DailySummaryDetails = ({ onBack, deviceName, deviceId, initialDate, onOpen
               <SummaryCard onPress={() => onGoToDgReport?.('MOVE', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} icon="timer-play" title="Move Time" value={formatTime(apiData?.total_dg_move)} color="#10b981" />
               <SummaryCard onPress={() => onGoToDgReport?.('IDLE', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} icon="timer-sand" title="Idle Time" value={formatTime(apiData?.total_dg_idle)} color="#f59e0b" />
               <SummaryCard onPress={() => onGoToDgReport?.('STOP', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} icon="stop-circle-outline" title="Stop Time" value={formatTime(apiData?.total_dg_stop)} color="#ef4444" />
-              <SummaryCard onPress={() => onGoToDgReport?.('ON', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} icon="power" title="DG ON" value={apiData?.total_dg_on ? String(apiData.total_dg_on).substring(0, 5) : '00:00'} color="#0ea5e9" />
-              <SummaryCard onPress={() => onGoToDgReport?.('OFF', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} icon="power-off" title="DG OFF" value={apiData?.total_dg_off ? String(apiData.total_dg_off).substring(0, 5) : '00:00'} color="#64748b" />
+              <SummaryCard onPress={() => onGoToDgReport?.('ON', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} icon="power" title="DG ON" value={formatTime(apiData?.total_dg_on)} color="#0ea5e9" />
+              <SummaryCard onPress={() => onGoToDgReport?.('OFF', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} icon="power-off" title="DG OFF" value={formatTime(apiData?.total_dg_off)} color="#64748b" />
             </View>
 
             <View style={styles.card}>
@@ -262,8 +267,8 @@ const DailySummaryDetails = ({ onBack, deviceName, deviceId, initialDate, onOpen
                 <View style={[styles.progressSegment, { backgroundColor: '#ef4444', flex: offPct > 0 ? offPct : 1 }]} />
               </View>
               <View style={styles.legendContainer}>
-                <LegendItem onPress={() => onGoToDgReport?.('ON', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} color="#10b981" label="ON" value={`${onPct}% (${apiData?.total_dg_on ? String(apiData.total_dg_on).substring(0, 5) : '00:00'})`} />
-                <LegendItem onPress={() => onGoToDgReport?.('OFF', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} color="#ef4444" label="OFF" value={`${offPct}% (${apiData?.total_dg_off ? String(apiData.total_dg_off).substring(0, 5) : '00:00'})`} />
+                <LegendItem onPress={() => onGoToDgReport?.('ON', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} color="#10b981" label="ON" value={`${onPct}% (${formatTime(apiData?.total_dg_on)})`} />
+                <LegendItem onPress={() => onGoToDgReport?.('OFF', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} color="#ef4444" label="OFF" value={`${offPct}% (${formatTime(apiData?.total_dg_off)})`} />
               </View>
             </View>
 
@@ -285,8 +290,8 @@ const DailySummaryDetails = ({ onBack, deviceName, deviceId, initialDate, onOpen
               <Text style={styles.cardTitle}>Additional Info</Text>
               <View style={styles.addInfoGrid}>
                 <AddInfoItem icon="car" label="DG Name" value={deviceName || apiData?.dg_name || 'Unknown'} />
-                {/* <AddInfoItem icon="identifier" label="GPS Indus ID" value={apiData?.gps_indus_id || 'N/A'} /> */}
-                {/* <AddInfoItem icon="file-document-outline" label="DG Number" value={apiData?.dg_number || 'N/A'} /> */}
+                <AddInfoItem icon="barcode" label="GPS IMEI" value={apiData?.gps_imei || 'N/A'} />
+                <AddInfoItem icon="calendar-check" label="Install Date" value={apiData?.gps_install_date ? moment(apiData.gps_install_date).format('DD/MM/YYYY') : 'N/A'} />
                 <AddInfoItem icon="speedometer" label="Distance" value={`${apiData?.total_dg_move_km || 0} km`} />
                 <AddInfoItem icon="lightning-bolt" label="Ext V Start" value={apiData?.start_adc1 != null ? `${parseFloat(apiData.start_adc1).toFixed(2)} V` : '0.00 V'} />
                 <AddInfoItem icon="lightning-bolt" label="Ext V End" value={apiData?.end_adc1 != null ? `${parseFloat(apiData.end_adc1).toFixed(2)} V` : '0.00 V'} />

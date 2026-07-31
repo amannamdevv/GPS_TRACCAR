@@ -163,6 +163,7 @@ const DetailsInfoScreen = ({ route, navigation }) => {
           { label: 'Motion', value: isMoving ? 'Moving' : 'Stopped', icon: 'run', color: isMoving ? '#3b82f6' : '#ef4444' },
           { label: 'Battery', value: src.battery_level != null ? `${src.battery_level}%` : 'N/A', icon: 'battery', color: src.battery_level > 20 ? '#10b981' : '#ef4444' },
           { label: 'Signal', value: src.rssi ? `${src.rssi}` : 'N/A', icon: 'signal', color: '#10b981' },
+          { label: 'Satellites', value: src.sat != null ? `${src.sat}` : 'N/A', icon: 'satellite-uplink', color: '#3b82f6' },
           { label: 'Charge', value: isCharging ? 'Charging' : 'Not Charging', icon: 'power-plug', color: isCharging ? '#10b981' : '#ef4444' },
           { label: 'Voltage', value: src.adc1 != null && !isNaN(Number(src.adc1)) ? `${Number(src.adc1).toFixed(2)} V` : '0.00 V', icon: 'car-battery' },
           { label: 'Last Updated', value: fmt(src.lastupdate || src.updated_at), icon: 'clock' },

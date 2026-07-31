@@ -730,4 +730,22 @@ export const fetchDgCurrentDeviceVoltage = async (params = {}) => {
   }
 };
 
+// ─── fetchDgDailySummary ───────────────────────────────────────────────────
+export const fetchDgDailySummary = async (deviceId, startDate, endDate, options = {}) => {
+  try {
+    const params = {
+      deviceid: deviceId,
+      start_date: startDate,
+      end_date: endDate,
+      from_date: startDate,
+      to_date: endDate,
+    };
+    const resp = await webApi.get('/dg_daily_summary_api/', { params, ...options });
+    return resp.data;
+  } catch (e) {
+    console.warn('[fetchDgDailySummary]', e.message);
+    return null;
+  }
+};
+
 export default webApi;
