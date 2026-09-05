@@ -1,13 +1,15 @@
-import React, { useContext } from 'react';
+import React, { useContext, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
 import Header from '../../components/Header';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { AuthContext } from '../../context/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import SupportBottomSheet from '../../components/SupportBottomSheet';
 
 const MeScreen = ({ navigation }) => {
   const { userInfo, logout } = useContext(AuthContext);
   const insets = useSafeAreaInsets();
+  const [isSupportVisible, setSupportVisible] = useState(false);
 
   const handleLogout = () => {
     Alert.alert(
@@ -33,6 +35,12 @@ const MeScreen = ({ navigation }) => {
         { name: 'DG By Site', icon: 'map-marker-radius', color: '#ea580c', route: 'DgBySiteScreen', desc: 'View towers around a device' },
         { name: 'Alerts', icon: 'bell', color: '#ef4444', route: 'AlertsList', desc: 'View recent system alerts' },
         // { name: 'DG Alarm Dashboard', icon: 'bell-alert-outline', color: '#ef4444', route: 'AlarmDashboard', desc: 'DG industrial alarm tracking' },
+      ]
+    },
+    {
+      title: 'Support',
+      items: [
+        { name: 'Help & Support', icon: 'help-circle-outline', color: '#0ea5e9', action: 'SUPPORT', desc: 'Contact our support team' },
       ]
     },
     {
@@ -71,7 +79,13 @@ const MeScreen = ({ navigation }) => {
                   <TouchableOpacity
                     style={styles.itemRow}
                     activeOpacity={0.7}
-                    onPress={() => item.params ? navigation.navigate(item.route, item.params) : navigation.navigate(item.route)}
+                    onPress={() => {
+                      if (item.action === 'SUPPORT') {
+                        setSupportVisible(true);
+                      } else {
+                        item.params ? navigation.navigate(item.route, item.params) : navigation.navigate(item.route);
+                      }
+                    }}
                   >
                     <View style={[styles.itemIconContainer, { backgroundColor: `${item.color}15` }]}>
                       <Icon name={item.icon} size={22} color={item.color} />
@@ -97,6 +111,10 @@ const MeScreen = ({ navigation }) => {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+
+      {isSupportVisible && (
+        <SupportBottomSheet setStatus={setSupportVisible} mode={false} />
+      )}
     </View>
   );
 };

@@ -382,8 +382,8 @@ const AlertsScreen = ({ navigation }) => {
     // ── Step 3: Fetch alerts & events (with retry) ────────────────────────
     try {
       const [alarmsRaw, customRaw] = await Promise.all([
-        withRetry(() => fetchAlarms()).catch(e => { console.warn('[AlertsScreen] fetchAlarms failed:', e?.message); return []; }),
-        withRetry(() => fetchCustomEvents()).catch(e => { console.warn('[AlertsScreen] fetchCustomEvents failed:', e?.message); return []; }),
+        withRetry(() => fetchAlarms(apiFilters)).catch(e => { console.warn('[AlertsScreen] fetchAlarms failed:', e?.message); return []; }),
+        withRetry(() => fetchCustomEvents(apiFilters)).catch(e => { console.warn('[AlertsScreen] fetchCustomEvents failed:', e?.message); return []; }),
       ]);
 
       const alarmsList = Array.isArray(alarmsRaw) ? alarmsRaw : (alarmsRaw?.data || []);

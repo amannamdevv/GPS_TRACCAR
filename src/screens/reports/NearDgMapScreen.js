@@ -229,6 +229,7 @@ const generateMapHtml = () => {
                     "<div class='dev-lbl' style='text-transform: none;'>Status</div><div class='dev-val' style='text-align: right;'>" + stBadge + "</div>" +
                     "<div class='dev-lbl' style='text-transform: none;'>DG</div><div class='dev-val' style='text-align: right;'>" + (dgOn ? 'ON' : 'OFF') + "</div>" +
                     "<div class='dev-lbl' style='text-transform: none;'>Distance</div><div class='dev-val' style='text-align: right; color: #f59e0b;'>" + (d.distance || '0') + " km</div>" +
+                    "<div class='dev-lbl' style='text-transform: none;'>Satellites</div><div class='dev-val' style='text-align: right; color: #3b82f6; font-weight:700'>" + (d.sat != null ? d.sat : (d.attributes && d.attributes.sat != null ? d.attributes.sat : (d.satellites != null ? d.satellites : 'N/A'))) + "</div>" +
                     "<div class='dev-lbl' style='text-transform: none;'>Site Name</div><div class='dev-val' style='text-align: right; word-break: break-word; font-size:10px; line-height:1.2'>" + siteName + "</div>" +
                     "<div class='dev-lbl' style='text-transform: none;'>IMEI</div><div class='dev-val' style='text-align: right; font-size:10px'>" + imeiStr + "</div>" +
                     "<div class='dev-lbl' style='text-transform: none;'>Motion</div><div class='dev-val' style='text-align: right;'>" + (motionOn ? 'Yes' : 'No') + "</div>" +

@@ -530,7 +530,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
               {(() => {
                 const id = item.site_id || item.nearest_indus_id;
                 const dist = item.site_distance != null ? item.site_distance : item.nearest_distance_m;
-                return id ? `${id} (${dist != null ? parseFloat(dist).toFixed(2) + ' km' : 'N/A'})` : 'Tower N/A';
+                return id ? `${id} (${dist != null ? dist + ' m' : 'N/A'})` : 'Tower N/A';
               })()}
             </Text>
           </View>

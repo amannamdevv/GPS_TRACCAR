@@ -14,7 +14,9 @@ const webApi = axios.create({
   },
 });
 
-// Automatically attach user ID to all API requests to ensure data is scoped to the logged-in user
+// Automatically attach user ID (+ user_type/emp_type) to all API requests
+// so data stays scoped to the logged-in user. user_type/emp_type added
+// because some endpoints (like dg_device_detail_json) key off these too.
 webApi.interceptors.request.use(async (config) => {
   if (config.url && config.url.includes('/login')) return config;
   try {
@@ -23,7 +25,14 @@ webApi.interceptors.request.use(async (config) => {
       const userInfo = JSON.parse(userInfoStr);
       const aid = userInfo.id || userInfo.aid;
       if (aid) {
-        config.params = { aid, userid: aid, user_id: aid, ...config.params };
+        config.params = {
+          aid,
+          userid: aid,
+          user_id: aid,
+          user_type: userInfo.user_type || '',
+          emp_type: userInfo.emp_type ?? '',
+          ...config.params,
+        };
       }
     }
   } catch (e) { }
@@ -144,6 +153,40 @@ export const fetchDeviceLatestMapApi = async (deviceId = null) => {
     return { towers: [] };
   }
 };
+
+// ─── FIX: normalize cluster/district filter for /dg_device_latest_json/ ──────
+// The website (and this endpoint on the backend) only understands a SINGLE
+// param name for cluster/district: `dist_id`. It does NOT understand
+// `cluster_id` or `district_id`.
+//
+// DashboardScreen.js builds its shared `apiFilters` object with BOTH
+// `cluster_id` and `district_id` keys (needed by /dg_dashboard/ and
+// /dg_dashboard_top10_api/, which DO accept those names). Previously this
+// raw object was spread directly into the device-list request too, so the
+// backend received `cluster_id`/`district_id` (which it doesn't recognize
+// for this endpoint) instead of `dist_id` — causing 0 devices to come back
+// as soon as a Cluster was selected, even though every other filter
+// (OM, AOM, FSE, Technician) worked fine.
+//
+// This helper only touches the params sent to THIS endpoint. It does not
+// change fetchDgDashboard / fetchDgDashboardTop10 / fetchFilterDropdowns,
+// which already do their own (correct) normalization.
+const normalizeFiltersForDeviceListApi = (filters = {}) => {
+  const normalized = { ...filters };
+  const clusterVal = normalized.cluster_id ?? normalized.district_id;
+
+  // Drop the names this endpoint doesn't understand...
+  delete normalized.cluster_id;
+  delete normalized.district_id;
+
+  // ...and send the one name it does understand (same as the website).
+  if (clusterVal !== undefined && clusterVal !== null && clusterVal !== '') {
+    normalized.dist_id = clusterVal;
+  }
+
+  return normalized;
+};
+
 const _fetchDeviceList = async (filters = {}, isRefresh = false) => {
   try {
     let userDeviceIds = new Set();
@@ -168,7 +211,7 @@ const _fetchDeviceList = async (filters = {}, isRefresh = false) => {
         console.warn("Silent re-login failed during refresh", err);
       }
     }
-    
+
     try {
       if (!parsedUserInfo) {
         const userInfoStr = await AsyncStorage.getItem('userInfo');
@@ -176,7 +219,7 @@ const _fetchDeviceList = async (filters = {}, isRefresh = false) => {
           parsedUserInfo = JSON.parse(userInfoStr);
         }
       }
-      
+
       if (parsedUserInfo && parsedUserInfo.device_ids) {
         if (Array.isArray(parsedUserInfo.device_ids)) {
           parsedUserInfo.device_ids.forEach(id => {
@@ -197,7 +240,10 @@ const _fetchDeviceList = async (filters = {}, isRefresh = false) => {
 
     const params = deviceIdsParam ? { device_ids: deviceIdsParam, deviceid: deviceIdsParam } : {};
     // Pass filter params alongside device_ids — do NOT set aid/userid/user_id to null (breaks auth)
-    const latestParams = { ...params, ...filters };
+    // FIX: normalize cluster/district naming (cluster_id/district_id -> dist_id)
+    // before sending to /dg_device_latest_json/, matching the website's behavior.
+    const normalizedFilters = normalizeFiltersForDeviceListApi(filters);
+    const latestParams = { ...params, ...normalizedFilters };
 
     const [latestResp, allResp] = await Promise.allSettled([
       getWithRetry('/dg_device_latest_json/', { params: latestParams }),
@@ -276,11 +322,11 @@ const _fetchDeviceList = async (filters = {}, isRefresh = false) => {
     const mergedArray = Array.from(map.values());
     const normalized = normalizeDeviceData(mergedArray);
     const devicesList = normalized.devices || [];
-    
+
     if (isRefresh) {
       console.log("Total devices received:", devicesList.length);
     }
-    
+
     return {
       success: true,
       devices: devicesList,
@@ -295,9 +341,9 @@ const _fetchDeviceList = async (filters = {}, isRefresh = false) => {
 };
 
 // ─── fetchCustomEvents ────────────────────────────────────────────────────────
-export const fetchCustomEvents = async () => {
+export const fetchCustomEvents = async (params = {}) => {
   try {
-    const response = await webApi.get('/custom_events_with_address_api/');
+    const response = await webApi.get('/custom_events_with_address_api/', { params });
     const raw = response.data;
     if (raw && Array.isArray(raw.data)) return raw.data;
     if (Array.isArray(raw)) return raw;
@@ -311,12 +357,15 @@ export const fetchCustomEvents = async () => {
 };
 
 // ─── fetchAlarms ─────────────────────────────────────────────────────────────
-export const fetchAlarms = async (deviceId) => {
+export const fetchAlarms = async (paramsOrDeviceId = {}) => {
   try {
-    const url = deviceId ? `/alaram/${deviceId}/` : '/alaram/';
+    const isDeviceId = typeof paramsOrDeviceId === 'string' || typeof paramsOrDeviceId === 'number';
+    const url = isDeviceId ? `/alaram/${paramsOrDeviceId}/` : '/alaram/';
+    const params = isDeviceId ? {} : paramsOrDeviceId;
+
     // Fetch alarms AND user-scoped device list in parallel (using /devices to cover all 243 devices)
     const [alarmsResp, scopeResp] = await Promise.allSettled([
-      webApi.get(url),
+      webApi.get(url, { params }),
       getWithRetry('/devices'),
     ]);
 
@@ -365,10 +414,14 @@ export const fetchAlarms = async (deviceId) => {
 // ─── fetchDgStatusLogs ────────────────────────────────────────────────────────
 export const fetchDgStatusLogs = async (params = {}) => {
   try {
+    // FIX: Normalize params before passing to dg_device_latest_json
+    // so that cluster filters work correctly
+    const deviceParams = normalizeFiltersForDeviceListApi(params);
+
     // Fetch DG status logs AND the user-scoped device list in parallel
     const [statusResp, scopeResp] = await Promise.allSettled([
       webApi.get('/dg_merged_status_api/', { params }),
-      getWithRetry('/dg_device_latest_json/'),
+      getWithRetry('/dg_device_latest_json/', { params: deviceParams }),
     ]);
 
     // Parse status logs
@@ -382,7 +435,10 @@ export const fetchDgStatusLogs = async (params = {}) => {
 
     // Build set of allowed device IDs from the user-scoped endpoint
     const allowedIds = new Set();
+    let isScopeFulfilled = false;
+    
     if (scopeResp.status === 'fulfilled' && scopeResp.value?.data) {
+      isScopeFulfilled = true;
       const scopeRaw = scopeResp.value.data;
       let scopeList = [];
       if (Array.isArray(scopeRaw)) scopeList = scopeRaw;
@@ -395,14 +451,20 @@ export const fetchDgStatusLogs = async (params = {}) => {
     }
 
     let finalData = result;
-    // Filter: only keep logs for devices that belong to this user
-    if (allowedIds.size > 0) {
-      finalData = result.filter(d => {
-        const devId = d.deviceid ?? d.device_id ?? d.deviceId;
-        return devId != null && allowedIds.has(String(devId));
-      });
+    // Filter: only keep logs for devices that belong to this user / match filters
+    if (isScopeFulfilled) {
+      if (allowedIds.size > 0) {
+        finalData = result.filter(d => {
+          const devId = d.deviceid ?? d.device_id ?? d.deviceId;
+          return devId != null && allowedIds.has(String(devId));
+        });
+      } else {
+        // If API returned successfully but 0 devices match the filter, 
+        // we should show 0 logs, not ALL logs.
+        finalData = [];
+      }
     }
-    
+
     // Extract total count from the raw response for pagination support
     const rawData = statusResp.status === 'fulfilled' ? statusResp.value?.data : null;
     const backendCount = rawData?.count || rawData?.total_count || rawData?.totalCount;
@@ -471,10 +533,10 @@ export const reverseGeocode = async (lat, lon) => {
             const parts = displayName.split(',');
             const filtered = [];
             for (let i = 0; i < parts.length; i++) {
-                const p = parts[i].trim();
-                if (p.toLowerCase() !== 'india' && !/^\d+$/.test(p)) {
-                    filtered.push(p);
-                }
+              const p = parts[i].trim();
+              if (p.toLowerCase() !== 'india' && !/^\d+$/.test(p)) {
+                filtered.push(p);
+              }
             }
             const finalAddress = filtered.join(', ');
             addressCache[key] = finalAddress;
@@ -587,23 +649,70 @@ export const getTripsReport = async (deviceId, from, to) => {
 };
 
 // ─── fetchFilterDropdowns ─────────────────────────────────────────────────────
-export const fetchFilterDropdowns = async (clientId = null, stateId = null, distId = null) => {
+export const fetchFilterDropdowns = async (clientId = null, stateId = null, omId = null, aomId = null, distId = null, fseId = null, technicianId = null) => {
   try {
     const params = {};
     if (clientId) params.client_id = clientId;
-    if (stateId) params.state_id = stateId;
-    if (distId) params.dist_id = distId;
+    if (stateId) { params.state_id = stateId; params.circle_id = stateId; }
+    if (omId) { params.om_head = omId; params.om_id = omId; }
+    if (aomId) { params.aom_id = aomId; params.aom = aomId; }
+    if (distId) { params.dist_id = distId; params.district_id = distId; params.cluster_id = distId; }
+    if (fseId) { params.fse_id = fseId; }
+    if (technicianId) { params.technician_id = technicianId; }
     const resp = await webApi.get('/filter-dropdowns/', { params });
     const raw = resp.data;
+
+    const mapItem = (item) => {
+      if (!item) return item;
+      return {
+        ...item,
+        id: item.id !== undefined ? item.id : item.aid,
+        name: item.name !== undefined ? item.name : (item.fullname !== undefined ? item.fullname : item.label)
+      };
+    };
+
+    const mapList = (list) => (Array.isArray(list) ? list.map(mapItem) : []);
+
     return {
-      clients: Array.isArray(raw.clients) ? raw.clients : [],
-      states: Array.isArray(raw.states) ? raw.states : [],
-      districts: Array.isArray(raw.districts) ? raw.districts : [],
-      clusters: Array.isArray(raw.clusters) ? raw.clusters : [],
+      clients: mapList(raw.clients),
+      states: mapList(raw.states),
+      oms: mapList(raw.OM_Head || raw.OM_head || raw.om_head || raw.om_heads || raw.oms || raw.om),
+      aoms: mapList(raw.AOM || raw.aom || raw.aoms || raw.aom_head),
+      districts: mapList(raw.districts || raw.clusters),
+      clusters: mapList(raw.clusters || raw.districts),
+      fses: mapList(raw.FSE || raw.fses || raw.fse),
+      technicians: mapList(raw.Technician || raw.technicians || raw.technician),
     };
   } catch (e) {
     console.warn('[fetchFilterDropdowns]', e.message);
-    return { clients: [], states: [], districts: [], clusters: [] };
+    return { clients: [], states: [], oms: [], aoms: [], districts: [], clusters: [], fses: [], technicians: [] };
+  }
+};
+
+export const fetchSupportDetails = async () => {
+  try {
+    const resp = await webApi.get('/jep_support_api/');
+    return resp.data;
+  } catch (e) {
+    console.warn('[fetchSupportDetails]', e.message);
+    return null;
+  }
+};
+
+export const fetchDesignationUsers = async (desigName, parentParams = {}) => {
+  try {
+    const params = { desig_name: desigName, ...parentParams };
+    const resp = await webApi.get('/designation_users_api/', { params });
+    if (resp.data && resp.data.status && Array.isArray(resp.data.data)) {
+      return resp.data.data.map(u => ({
+        id: u.aid,
+        name: u.fullname
+      }));
+    }
+    return [];
+  } catch (e) {
+    console.warn(`[fetchDesignationUsers] ${desigName}:`, e.message);
+    return [];
   }
 };
 
@@ -612,13 +721,20 @@ export const fetchDgDashboard = async (options = {}) => {
   try {
     const params = {};
     if (options.client_id) params.client_id = options.client_id;
-    if (options.state_id) params.state_id = options.state_id;
-    if (options.district_id) params.dist_id = options.district_id;
-    if (options.cluster_id) params.cluster_id = options.cluster_id;
-    
-    const resp = await webApi.get('/dg_dashboard/', { 
+    if (options.state_id) { params.state_id = options.state_id; params.circle_id = options.state_id; }
+    // Backend accepts om_id (not om_head)
+    if (options.om_id) params.om_id = options.om_id;
+    if (options.om_head) params.om_id = options.om_head;
+    if (options.aom_id) params.aom_id = options.aom_id;
+    // cluster_id and district_id both map to dist_id on backend
+    const clustVal = options.cluster_id || options.district_id;
+    if (clustVal) { params.dist_id = clustVal; params.cluster_id = clustVal; }
+    if (options.fse_id) params.fse_id = options.fse_id;
+    if (options.technician_id) params.technician_id = options.technician_id;
+
+    const resp = await webApi.get('/dg_dashboard/', {
       params,
-      timeout: 15000 
+      timeout: 15000
     });
     return resp.data || { top_moving: [], top_idle: [] };
   } catch (e) {
@@ -634,15 +750,22 @@ export const fetchDgDashboardTop10 = async (options = {}) => {
     if (options.from_date) params.from_date = options.from_date;
     if (options.to_date) params.to_date = options.to_date;
     if (options.client_id) params.client_id = options.client_id;
-    if (options.state_id) params.state_id = options.state_id;
-    if (options.district_id) params.dist_id = options.district_id;
-    if (options.cluster_id) params.cluster_id = options.cluster_id;
-    
-    const resp = await webApi.get('/dg_dashboard_top10_api/', { 
+    if (options.state_id) { params.state_id = options.state_id; params.circle_id = options.state_id; }
+    // Backend accepts om_id (not om_head)
+    if (options.om_id) params.om_id = options.om_id;
+    if (options.om_head) params.om_id = options.om_head;
+    if (options.aom_id) params.aom_id = options.aom_id;
+    // cluster_id and district_id both map to dist_id on backend
+    const clustVal = options.cluster_id || options.district_id;
+    if (clustVal) { params.dist_id = clustVal; params.cluster_id = clustVal; }
+    if (options.fse_id) params.fse_id = options.fse_id;
+    if (options.technician_id) params.technician_id = options.technician_id;
+
+    const resp = await webApi.get('/dg_dashboard_top10_api/', {
       params,
-      timeout: 20000, 
+      timeout: 20000,
     });
-    
+
     const data = resp.data || {};
     return {
       top_moving: Array.isArray(data.top_moving) ? data.top_moving : [],
@@ -656,13 +779,19 @@ export const fetchDgDashboardTop10 = async (options = {}) => {
 };
 
 // ─── fetchDgDeviceDetail ───────────────────────────────────────────────────
-export const fetchDgDeviceDetail = async () => {
+// Powers the "Device Information" screen (mirrors website's DG List /
+// dg_device_detail_json). Passing a generous limit so the single-device
+// find() on the client side has the full list to search through.
+export const fetchDgDeviceDetail = async (extraParams = {}) => {
   try {
-    const resp = await webApi.get('/dg_device_detail/');
-    return resp.data;
+    const resp = await webApi.get('/dg_device_detail/', {
+      params: { limit: 500, ...extraParams },
+      timeout: 20000,
+    });
+    return resp.data || { status: false, data: [] };
   } catch (e) {
     console.warn('[fetchDgDeviceDetail]', e.message);
-    return { data: [] };
+    return { status: false, data: [], error: e.message };
   }
 };
 
@@ -680,9 +809,9 @@ export const fetchLiveVoltageStatus = async (options = {}) => {
 // ─── fetchDgBySiteReport ─────────────────────────────────────────────────────
 export const fetchDgBySiteReport = async (params = {}) => {
   try {
-    const resp = await webApi.get('/dg_by_site_api/', { 
+    const resp = await webApi.get('/dg_by_site_api/', {
       params,
-      timeout: 30000 
+      timeout: 30000
     });
     return resp.data;
   } catch (e) {
@@ -694,9 +823,9 @@ export const fetchDgBySiteReport = async (params = {}) => {
 // ─── fetchSiteList ───────────────────────────────────────────────────────────
 export const fetchSiteList = async (params = {}) => {
   try {
-    const resp = await webApi.get('/site_list_api/', { 
+    const resp = await webApi.get('/site_list_api/', {
       params,
-      timeout: 20000 
+      timeout: 20000
     });
     return resp.data;
   } catch (e) {
@@ -708,9 +837,9 @@ export const fetchSiteList = async (params = {}) => {
 // ─── fetchNearbyDg ───────────────────────────────────────────────────────────
 export const fetchNearbyDg = async (params = {}) => {
   try {
-    const resp = await webApi.get('/nearby_dg_api/', { 
+    const resp = await webApi.get('/nearby_dg_api/', {
       params,
-      timeout: 30000 
+      timeout: 30000
     });
     return resp.data;
   } catch (e) {
@@ -745,6 +874,21 @@ export const fetchDgDailySummary = async (deviceId, startDate, endDate, options 
   } catch (e) {
     console.warn('[fetchDgDailySummary]', e.message);
     return null;
+  }
+};
+
+export const fetchImeList = async () => {
+  try {
+    const resp = await webApi.get('/user_ime_list_api/');
+    const raw = resp.data;
+    const list = Array.isArray(raw) ? raw : (raw.data || []);
+    return list.map(item => {
+      if (typeof item === 'string') return { id: item, name: item };
+      return { id: item.ime || item.name || item.id, name: item.ime || item.name || String(item.id) };
+    });
+  } catch (e) {
+    console.warn('[fetchImeList]', e.message);
+    return [];
   }
 };
 

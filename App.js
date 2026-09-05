@@ -8,6 +8,7 @@ import AppNavigator from './src/navigation/AppNavigator';
 import AlertNotificationService from './src/services/AlertNotificationService';
 import UpdateModal from './src/components/UpdateModal';
 import UpdateChecker from './src/services/UpdateChecker';
+import NoInternetOverlay from './src/components/NoInternetOverlay';
 
 // ─── Inner component — AuthContext yahan available hai ────────────────────────
 const AppInner = () => {
@@ -44,6 +45,7 @@ const App = () => {
         <FilterProvider>
           <AppInner />
           <UpdateModal />
+          <NoInternetOverlay />
         </FilterProvider>
       </AuthProvider>
     </SafeAreaProvider>

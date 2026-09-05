@@ -10,9 +10,13 @@ export const FilterContext = createContext();
 export const FilterProvider = ({ children }) => {
   // Applied filter labels (for UI display - chips, badges)
   const [appliedClient, setAppliedClient] = useState(null);
+  const [appliedIme, setAppliedIme] = useState(null);
   const [appliedState, setAppliedState] = useState(null);
-  const [appliedDistrict, setAppliedDistrict] = useState(null);
+  const [appliedOm, setAppliedOm] = useState(null);
+  const [appliedAom, setAppliedAom] = useState(null);
   const [appliedCluster, setAppliedCluster] = useState(null);
+  const [appliedFse, setAppliedFse] = useState(null);
+  const [appliedTechnician, setAppliedTechnician] = useState(null);
   const [appliedDevice, setAppliedDevice] = useState(null);
 
   // API params that other screens will use when fetching devices
@@ -24,9 +28,13 @@ export const FilterProvider = ({ children }) => {
   // Called from DashboardScreen when Apply is pressed
   const applyFilter = useCallback((labels, params) => {
     setAppliedClient(labels.client || null);
+    setAppliedIme(labels.ime || null);
     setAppliedState(labels.state || null);
-    setAppliedDistrict(labels.district || null);
+    setAppliedOm(labels.om || null);
+    setAppliedAom(labels.aom || null);
     setAppliedCluster(labels.cluster || null);
+    setAppliedFse(labels.fse || null);
+    setAppliedTechnician(labels.technician || null);
     setAppliedDevice(labels.device || null);
     setApiFilters(params || {});
   }, []);
@@ -34,15 +42,19 @@ export const FilterProvider = ({ children }) => {
   // Called from DashboardScreen Clear, or any screen's Reset button
   const clearFilter = useCallback(() => {
     setAppliedClient(null);
+    setAppliedIme(null);
     setAppliedState(null);
-    setAppliedDistrict(null);
+    setAppliedOm(null);
+    setAppliedAom(null);
     setAppliedCluster(null);
+    setAppliedFse(null);
+    setAppliedTechnician(null);
     setAppliedDevice(null);
     setApiFilters({});
   }, []);
 
   // Human-readable active filter string for display
-  const filterLabel = [appliedClient, appliedState, appliedDistrict, appliedCluster, appliedDevice]
+  const filterLabel = [appliedClient, appliedIme, appliedState, appliedOm, appliedAom, appliedCluster, appliedFse, appliedTechnician, appliedDevice]
     .filter(Boolean)
     .map(f => (typeof f === 'object' ? f.name : f))
     .join(' › ');
@@ -50,7 +62,7 @@ export const FilterProvider = ({ children }) => {
   return (
     <FilterContext.Provider value={{
       // Labels (for Dashboard filter panel sync)
-      appliedClient, appliedState, appliedDistrict, appliedCluster, appliedDevice,
+      appliedClient, appliedIme, appliedState, appliedOm, appliedAom, appliedCluster, appliedFse, appliedTechnician, appliedDevice,
       // API params (for fetching in other screens)
       apiFilters,
       // State

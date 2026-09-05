@@ -89,7 +89,7 @@ const DevicesScreen = ({ navigation, route }) => {
     if (!isLoading && userToken) {
       fetchDevices();
     }
-    
+
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active' && userToken) {
         fetchDevices(true);
@@ -131,8 +131,8 @@ const DevicesScreen = ({ navigation, route }) => {
       list = list.filter(d => {
         let v = parseFloat(d.adc1 || d.adc1_voltage || "0");
         if (isNaN(v)) v = 0;
-        
-        if (voltageFilter === 'Danger') return v < 9.5;
+
+        if (voltageFilter === 'LOW VOLTAGE') return v < 9.5;
         if (voltageFilter === 'Critical') return v >= 9.5 && v < 11.5;
         if (voltageFilter === 'Normal') return v >= 11.5;
         return true;
@@ -201,9 +201,9 @@ const DevicesScreen = ({ navigation, route }) => {
           <Text style={{ fontSize: 13, color: '#64748b', marginRight: 8 }}>
             Filtered by Voltage: <Text style={{ fontWeight: '700', color: '#1e3a8a' }}>
               {route.params.voltageFilter}
-              {route.params.voltageFilter === 'Danger' ? ' (0.0 - 9.4V)' : ''}
-              {route.params.voltageFilter === 'Critical' ? ' (9.5V - 11.4V)' : ''}
-              {route.params.voltageFilter === 'Normal' ? ' (>= 11.5V)' : ''}
+              {route.params.voltageFilter === 'LOW VOLTAGE' ? ' (0.0 - 9.49V)' : ''}
+              {route.params.voltageFilter === 'Critical' ? ' (9.50V - 11.49V)' : ''}
+              {route.params.voltageFilter === 'Normal' ? ' (>= 11.50V)' : ''}
             </Text>
           </Text>
           <TouchableOpacity onPress={() => navigation.setParams({ voltageFilter: null })}>

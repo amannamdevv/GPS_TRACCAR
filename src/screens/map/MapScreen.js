@@ -163,12 +163,9 @@ const MapScreen = ({ navigation, route }) => {
     <body>
       <div id="map"></div>
       <script>
-        var indiaBounds = [[6.4626999, 68.1097], [35.513327, 97.3953586]];
         var map = L.map('map', { 
           zoomControl: false,
-          maxBounds: indiaBounds,
-          maxBoundsViscosity: 1.0,
-          minZoom: 4
+          minZoom: 2
         }).setView([20.5937, 78.9629], 5);
         
         var layers = {
@@ -330,6 +327,7 @@ const MapScreen = ({ navigation, route }) => {
                  '<div class="popup-row"><span class="popup-label">Speed</span><span class="popup-value">' + speedKmh + ' km/h</span></div>' +
                  '<div class="popup-row"><span class="popup-label">Battery</span><span class="popup-value">' + battIcon + battText + '</span></div>' +
                  '<div class="popup-row"><span class="popup-label">Voltage</span><span class="popup-value" style="color:#3b82f6;font-weight:700">' + voltage + '</span></div>' +
+                 '<div class="popup-row"><span class="popup-label">Satellites</span><span class="popup-value" style="color:#3b82f6;font-weight:700">' + (pos.sat != null ? pos.sat : (pos.attributes && pos.attributes.sat != null ? pos.attributes.sat : (pos.satellites != null ? pos.satellites : 'N/A'))) + '</span></div>' +
                  '<div class="popup-row"><span class="popup-label">Nearest Site</span><span class="popup-value" style="color:#8b5cf6;font-weight:700">' + nearestStr + '</span></div>' +
                  '<div class="popup-row" style="align-items:flex-start"><span class="popup-label" style="min-width:52px">Address</span><span class="popup-value" style="font-size:10px;text-align:right;line-height:1.4">' + address + '</span></div>' +
                  (pos.nearestTowerName ?
@@ -1048,6 +1046,9 @@ const MapScreen = ({ navigation, route }) => {
           <View style={{ marginTop: 4, marginBottom: 8, paddingHorizontal: 4 }}>
             <Text style={{ fontSize: 12, color: '#3b82f6', fontWeight: '700', marginBottom: 4 }}>
               Voltage : {positions[selectedDeviceId]?.adc1 != null ? parseFloat(positions[selectedDeviceId].adc1).toFixed(2) : (selectedDevice.adc1 != null ? parseFloat(selectedDevice.adc1).toFixed(2) : '0.00')} V
+            </Text>
+            <Text style={{ fontSize: 12, color: '#3b82f6', fontWeight: '700', marginBottom: 4 }}>
+              Satellites : {positions[selectedDeviceId]?.sat != null ? positions[selectedDeviceId].sat : (positions[selectedDeviceId]?.attributes?.sat != null ? positions[selectedDeviceId].attributes.sat : (positions[selectedDeviceId]?.satellites != null ? positions[selectedDeviceId].satellites : (selectedDevice.sat != null ? selectedDevice.sat : (selectedDevice.attributes?.sat != null ? selectedDevice.attributes.sat : (selectedDevice.satellites != null ? selectedDevice.satellites : 'N/A')))))}
             </Text>
             <Text style={{ fontSize: 12, color: '#8b5cf6', fontWeight: '700' }}>
               Nearest Site : {positions[selectedDeviceId]?.site_id || positions[selectedDeviceId]?.nearest_indus_id || selectedDevice.site_id || selectedDevice.nearest_indus_id || 'N/A'} {

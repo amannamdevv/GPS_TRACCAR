@@ -22,6 +22,7 @@ import moment from 'moment';
 
 import Header from '../../components/Header';
 import { fetchDgStatusLogs, fetchDeviceList, reverseGeocode } from '../../api/webApi';
+import { useFilter } from '../../context/FilterContext';
 
 // ─── HELPER: Format timestamp nicely ─────────────────────────────────────────
 const formatTime = (raw) => {
@@ -62,6 +63,7 @@ const STATUS_OPTIONS = [
 ];
 
 const DgStatusLogScreen = ({ route, navigation }) => {
+  const { apiFilters } = useFilter();
   const routeDeviceId = route?.params?.deviceId;
   const routeDeviceName = route?.params?.deviceName;
 
@@ -241,16 +243,14 @@ const DgStatusLogScreen = ({ route, navigation }) => {
         end_date: endMom.format('YYYY-MM-DD'),
         page: 1,
         limit: 9999, // Fetch all records for INSTANT client-side pagination
+        ...apiFilters
       };
 
       if (devIdParam) params.deviceid = devIdParam;
       if (devNameParam) params.dg_name = devNameParam;
 
-      if (activeStatus && activeStatus !== 'ALL') {
-        let apiStatus = activeStatus;
-        if (activeStatus === 'MOVING') apiStatus = 'MOVE';
-        params.dg_status = apiStatus;
-      }
+      // We will perform local filtering for status to ensure it perfectly matches the UI definitions.
+      // (The backend might not support all status types like 'OFF', 'STOP' for this endpoint).
 
       const response = await fetchDgStatusLogs(params, signal);
       if (signal.aborted) return;
@@ -261,6 +261,21 @@ const DgStatusLogScreen = ({ route, navigation }) => {
       if (appliedImei && appliedImei.trim() !== '') {
         const query = appliedImei.trim().toLowerCase();
         rawLogList = rawLogList.filter(item => String(item.uniqueid || '').toLowerCase().includes(query));
+      }
+
+      if (activeStatus && activeStatus !== 'ALL') {
+        rawLogList = rawLogList.filter(item => {
+          const rawStatus = String(item.final_status || item.dg_status || item.status || '').trim().toUpperCase();
+          const isMoving = rawStatus.includes('MOVING') || rawStatus.includes('MOVE') || rawStatus.includes('MOTION') || rawStatus.includes('TRANSIT');
+          const isStopped = rawStatus.includes('STOP') || rawStatus.includes('IDLE') || rawStatus.includes('PARK');
+          const isOn = rawStatus.includes('ON') || rawStatus === '1';
+
+          if (activeStatus === 'MOVING') return isMoving;
+          if (activeStatus === 'STOP') return isStopped;
+          if (activeStatus === 'ON') return isOn;
+          if (activeStatus === 'OFF') return !isMoving && !isStopped && !isOn;
+          return true;
+        });
       }
 
       const total = rawLogList.length;
@@ -297,7 +312,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
         setLoadingMore(false);
       }
     }
-  }, [deviceId, deviceName, startDate, endDate, pageSize, statusFilter, lazyGeocodeAddresses, imeiFilter]);
+  }, [deviceId, deviceName, startDate, endDate, pageSize, statusFilter, lazyGeocodeAddresses, imeiFilter, apiFilters]);
 
   useEffect(() => {
     return () => {
@@ -336,7 +351,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
     };
 
     if (devices.length === 0) {
-      fetchDeviceList()
+      fetchDeviceList(apiFilters)
         .then(data => {
           const list = data?.devices || [];
           setDevices(list);
@@ -349,7 +364,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
     } else {
       handleRouteParams(devices);
     }
-  }, [routeDeviceId, routeDeviceName]);
+  }, [routeDeviceId, routeDeviceName, apiFilters]);
 
   const handleApply = () => {
     const newStatus = tempStatusFilter;
@@ -511,7 +526,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
               {(() => {
                 const id = item.site_id || item.nearest_indus_id;
                 const dist = item.site_distance != null ? item.site_distance : item.nearest_distance_m;
-                return id ? `${id} (${dist != null ? parseFloat(dist).toFixed(2) + ' km' : 'N/A'})` : 'Tower N/A';
+                return id ? `${id} (${dist != null ? dist + ' m' : 'N/A'})` : 'Tower N/A';
               })()}
             </Text>
           </View>

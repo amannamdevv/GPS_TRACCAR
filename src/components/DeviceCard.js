@@ -215,6 +215,19 @@ const DeviceCard = ({ device, onPress }) => {
             </Text>
           </View>
 
+          {/* Satellites */}
+          <View style={styles.telItem}>
+            <Icon
+              name="satellite-uplink"
+              size={17}
+              color="#3b82f6"
+            />
+            <Text style={styles.telLabel}>Sat:</Text>
+            <Text style={styles.telValue}>
+              {device.sat != null ? device.sat : (device.attributes && device.attributes.sat != null ? device.attributes.sat : (device.satellites != null ? device.satellites : 'N/A'))}
+            </Text>
+          </View>
+
           {/* Voltage - Clean placement */}
           <View style={styles.telItem}>
             <Icon

@@ -5,7 +5,8 @@ import {
 } from 'react-native';
 import Header from '../../components/Header';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
-import { fetchSiteList, fetchFilterDropdowns } from '../../api/webApi';
+import { fetchSiteList } from '../../api/webApi';
+import { useFilter } from '../../context/FilterContext';
 import moment from 'moment';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -21,87 +22,7 @@ const StatCard = ({ icon, color, title, value, bgColor }) => (
   </View>
 );
 
-const CustomDropdown = forwardRef(({ label, value, options, onSelect, placeholder }, ref) => {
-  const [modalVisible, setModalVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  useImperativeHandle(ref, () => ({
-    open: () => {
-      setSearchQuery('');
-      setModalVisible(true);
-    },
-    close: () => setModalVisible(false)
-  }));
-
-  const selectedOption = options.find(opt => opt.value === value);
-  const displayValue = selectedOption ? selectedOption.label : value;
-
-  const filteredOptions = options.filter(opt => opt.label.toLowerCase().includes(searchQuery.toLowerCase()));
-
-  return (
-    <View style={styles.filterInputWrapper}>
-      <Text style={styles.filterLabel}>{label}</Text>
-      <TouchableOpacity style={styles.dropdownBtn} onPress={() => { setSearchQuery(''); setModalVisible(true); }}>
-        <Text style={[styles.dropdownBtnText, !value && { color: '#94a3b8' }]} numberOfLines={1}>
-          {displayValue || placeholder}
-        </Text>
-        <Icon name="chevron-down" size={16} color="#64748b" />
-      </TouchableOpacity>
-
-      <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setModalVisible(false)}>
-          <TouchableOpacity activeOpacity={1} style={styles.dropdownMenu} onPress={(e) => e.stopPropagation()}>
-            <Text style={styles.dropdownTitle}>Select {label}</Text>
-            
-            <View style={{ paddingHorizontal: 16, paddingBottom: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f1f5f9', borderRadius: 8, paddingHorizontal: 10 }}>
-                <Icon name="magnify" size={20} color="#64748b" />
-                <TextInput
-                  style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 10, color: '#1e293b' }}
-                  placeholder="Search..."
-                  placeholderTextColor="#94a3b8"
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity onPress={() => setSearchQuery('')}>
-                    <Icon name="close" size={20} color="#64748b" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-
-            <FlatList
-              data={[{ label: `All ${label}`, value: '' }, ...filteredOptions]}
-              keyExtractor={(item, index) => String(index)}
-              keyboardShouldPersistTaps="handled"
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[styles.dropdownItem, value === item.value && { backgroundColor: '#f1f5f9' }]}
-                  onPress={() => {
-                    onSelect(item.value);
-                    setModalVisible(false);
-                  }}
-                >
-                  <Text style={[styles.dropdownItemText, value === item.value && { color: '#1a3a6b', fontWeight: 'bold' }]}>
-                    {item.label}
-                  </Text>
-                  {value === item.value && <Icon name="check" size={16} color="#1a3a6b" />}
-                </TouchableOpacity>
-              )}
-              ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: '#f1f5f9' }} />}
-            />
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-    </View>
-  );
-});
-
 const SiteListReportScreen = ({ navigation }) => {
-  const distDropdownRef = useRef(null);
-  const clusterDropdownRef = useRef(null);
-
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -114,26 +35,8 @@ const SiteListReportScreen = ({ navigation }) => {
   const [nonDgSites, setNonDgSites] = useState(0);
   const [userRole, setUserRole] = useState(null);
 
-  // Filters
-  const [filters, setFilters] = useState({
-    siteId: '',
-    siteName: '',
-    state_id: '',
-    dist_id: '',
-    cluster_id: '',
-    siteType: '',
-    client_id: ''
-  });
-  const [dropdownOptions, setDropdownOptions] = useState({
-    clients: [],
-    states: [],
-    districts: [],
-    clusters: [],
-    siteTypes: [
-      { label: 'DG Site', value: 'DG Site' },
-      { label: 'Non DG', value: 'Non DG' }
-    ]
-  });
+  const { apiFilters } = useFilter();
+  const [extraFilters, setExtraFilters] = useState({ siteId: '', siteName: '', siteType: '' });
 
   const mapOpt = (arr) => (arr || []).map(item => {
     if (typeof item === 'string') return { label: item, value: item };
@@ -169,31 +72,9 @@ const SiteListReportScreen = ({ navigation }) => {
           setUserRole(user.role || user.is_superadmin ? 'superadmin' : '');
         }
       } catch (e) {}
-      loadDropdowns();
     };
     init();
   }, []);
-
-  const handleStateSelect = async (val) => {
-    setFilters(prev => ({ ...prev, state_id: val, dist_id: '', cluster_id: '' }));
-    await loadDropdowns(val, null);
-    if (val && distDropdownRef.current) {
-      setTimeout(() => {
-        distDropdownRef.current.open();
-      }, 100);
-    }
-  };
-
-  const handleDistrictSelect = async (val) => {
-    setFilters(prev => ({ ...prev, dist_id: val, cluster_id: '' }));
-    await loadDropdowns(filters.state_id, val);
-    if (val && clusterDropdownRef.current) {
-      setTimeout(() => {
-        clusterDropdownRef.current.open();
-      }, 100);
-    }
-  };
-
 
   const loadData = async (pageNumber = 1, isRefresh = false, overrideFilters = null) => {
     if (pageNumber === 1) {
@@ -204,17 +85,14 @@ const SiteListReportScreen = ({ navigation }) => {
     }
     
     try {
-      const currentFilters = overrideFilters || filters;
+      const currentExtra = overrideFilters || extraFilters;
       const params = {
         page: pageNumber,
         limit: 20,
-        site_id: currentFilters.siteId,
-        site_name: currentFilters.siteName,
-        state_id: currentFilters.state_id,
-        dist_id: currentFilters.dist_id,
-        cluster_id: currentFilters.cluster_id,
-        site_type: currentFilters.siteType,
-        client_id: currentFilters.client_id
+        site_id: currentExtra.siteId,
+        site_name: currentExtra.siteName,
+        site_type: currentExtra.siteType,
+        ...apiFilters
       };
 
       Object.keys(params).forEach(key => !params[key] && delete params[key]);
@@ -301,10 +179,10 @@ const SiteListReportScreen = ({ navigation }) => {
   };
 
   const handleResetFilters = () => {
-    const emptyFilters = { siteId: '', siteName: '', state_id: '', dist_id: '', cluster_id: '', siteType: '', client_id: '' };
-    setFilters(emptyFilters);
+    const empty = { siteId: '', siteName: '', siteType: '' };
+    setExtraFilters(empty);
     setShowFilters(false);
-    loadData(1, false, emptyFilters);
+    loadData(1, false, empty);
   };
 
   const renderFilterInput = (key, placeholder) => (
@@ -313,8 +191,8 @@ const SiteListReportScreen = ({ navigation }) => {
       <TextInput
         style={styles.filterTextInput}
         placeholder={`e.g. ${placeholder}`}
-        value={filters[key]}
-        onChangeText={(val) => setFilters(prev => ({ ...prev, [key]: val }))}
+        value={extraFilters[key]}
+        onChangeText={(val) => setExtraFilters(prev => ({ ...prev, [key]: val }))}
         placeholderTextColor="#94a3b8"
       />
     </View>
@@ -450,64 +328,32 @@ const SiteListReportScreen = ({ navigation }) => {
         />
       )}
       {showFilters && (
-        <View style={[styles.filtersContainer, { zIndex: 10, elevation: 10 }]}>
-          <ScrollView contentContainerStyle={styles.filterScroll}>
-            <View style={styles.filterGrid}>
-              {userRole === 'superadmin' && (
-                <CustomDropdown
-                  label="IME"
-                  placeholder="All IME"
-                  value={filters.client_id}
-                  options={dropdownOptions.clients}
-                  onSelect={(val) => setFilters(prev => ({...prev, client_id: val}))}
-                />
-              )}
+        <View style={styles.filtersContainer}>
+          <ScrollView contentContainerStyle={styles.filterScroll} keyboardShouldPersistTaps="handled">
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', paddingHorizontal: 12 }}>
               {renderFilterInput('siteId', 'Site ID')}
               {renderFilterInput('siteName', 'Site Name')}
-              
-              <CustomDropdown
-                label="State"
-                placeholder="All States"
-                value={filters.state_id}
-                options={dropdownOptions.states}
-                onSelect={handleStateSelect}
-              />
-              <CustomDropdown
-                label="District"
-                placeholder="All Districts"
-                value={filters.dist_id}
-                options={dropdownOptions.districts}
-                onSelect={handleDistrictSelect}
-                ref={distDropdownRef}
-              />
-              <CustomDropdown
-                label="Cluster"
-                placeholder="All Clusters"
-                value={filters.cluster_id}
-                options={dropdownOptions.clusters}
-                onSelect={(val) => setFilters(prev => ({...prev, cluster_id: val}))}
-                ref={clusterDropdownRef}
-              />
-              <CustomDropdown
-                label="Site Type"
-                placeholder="All Types"
-                value={filters.siteType}
-                options={dropdownOptions.siteTypes}
-                onSelect={(val) => setFilters(prev => ({...prev, siteType: val}))}
-              />
-            </View>
-            
-            <View style={styles.filterActions}>
-              <TouchableOpacity style={styles.resetBtn} onPress={handleResetFilters}>
-                <Icon name="refresh" size={16} color="#64748b" />
-                <Text style={styles.resetBtnText}>Reset</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.applyBtn} onPress={handleApplyFilters}>
-                <Icon name="magnify" size={16} color="#fff" />
-                <Text style={styles.applyBtnText}>Apply</Text>
-              </TouchableOpacity>
+              <View style={styles.filterInputWrapper}>
+                <Text style={styles.filterLabel}>Site Type</Text>
+                <TextInput
+                  style={styles.filterTextInput}
+                  placeholder="e.g. DG Site"
+                  value={extraFilters.siteType}
+                  onChangeText={(val) => setExtraFilters(prev => ({ ...prev, siteType: val }))}
+                  placeholderTextColor="#94a3b8"
+                />
+              </View>
             </View>
           </ScrollView>
+          
+          <View style={styles.filterActions}>
+            <TouchableOpacity style={styles.resetBtn} onPress={handleResetFilters}>
+              <Text style={styles.resetBtnText}>Reset</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.applyBtn} onPress={handleApplyFilters}>
+              <Text style={styles.applyBtnText}>Apply</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 

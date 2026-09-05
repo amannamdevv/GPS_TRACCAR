@@ -17,7 +17,7 @@ import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Svg, { Path, G, Text as SvgText, Circle, Defs, ClipPath, Rect, Polyline, Line } from 'react-native-svg';
 import Header from '../../components/Header';
 import DeviceCard from '../../components/DeviceCard';
-import { fetchDeviceList, fetchDgDashboard, fetchDgDashboardTop10, fetchFilterDropdowns, fetchDgCurrentDeviceVoltage } from '../../api/webApi';
+import { fetchDeviceList, fetchDgDashboard, fetchDgDashboardTop10, fetchFilterDropdowns, fetchDgCurrentDeviceVoltage, fetchDesignationUsers, fetchImeList } from '../../api/webApi';
 import { Modal, ScrollView } from 'react-native';
 import { AuthContext } from '../../context/AuthContext';
 import { useFilter } from '../../context/FilterContext';
@@ -229,7 +229,8 @@ const Top10BarChart = ({ data, dateRange = '7days', onDateRangeChange }) => {
                   const barWidth = Math.min(barSpacing * 0.55, maxBarWidth);
                   const x = (i * barSpacing) + (barSpacing - barWidth) / 2;
                   const isZeroBar = numVal === 0;
-                  const displayBarH = isZeroBar ? 3 : Math.max(barH, 3);
+                  // Non-zero bars get a minimum height of 12 to be clearly visible against the 3px zero bars
+                  const displayBarH = isZeroBar ? 3 : Math.max(barH, 12);
                   const displayY = 180 - displayBarH;
                   const barColor = isZeroBar
                     ? '#cbd5e1'
@@ -432,7 +433,7 @@ const getTop10Dates = (range) => {
     };
   } else if (range === '30days') {
     return {
-      startDate: moment().subtract(30, 'days').format('YYYY-MM-DD'),
+      startDate: moment().subtract(29, 'days').format('YYYY-MM-DD'),
       endDate: moment().subtract(1, 'days').format('YYYY-MM-DD')
     };
   }
@@ -446,15 +447,19 @@ const getTop10Dates = (range) => {
 // ─── DASHBOARD SCREEN ─────────────────────────────────────────────────────────
 const DashboardScreen = ({ navigation }) => {
   const { userInfo } = useContext(AuthContext);
-  const isSuperadmin = userInfo?.user_type === 'Superadmin';
-  const { 
+  const isSuperadmin = userInfo?.user_type?.toLowerCase() === 'superadmin' || userInfo?.is_superadmin || userInfo?.role?.toLowerCase() === 'superadmin' || userInfo?.emp_type == 0 || userInfo?.emp_type === '0';
+  const {
     appliedClient: globalClient,
+    appliedIme: globalIme,
     appliedState: globalState,
-    appliedDistrict: globalDistrict,
+    appliedOm: globalOm,
+    appliedAom: globalAom,
     appliedCluster: globalCluster,
+    appliedFse: globalFse,
+    appliedTechnician: globalTechnician,
     appliedDevice: globalDevice,
-    applyFilter: applyGlobalFilter, 
-    clearFilter: clearGlobalFilter 
+    applyFilter: applyGlobalFilter,
+    clearFilter: clearGlobalFilter
   } = useFilter();
 
   const [data, setData] = useState(null);
@@ -473,17 +478,26 @@ const DashboardScreen = ({ navigation }) => {
 
   // ─── CASCADE FILTER STATE ─────────────────────────────────────────────────
   const [showFilterPanel, setShowFilterPanel] = useState(false);
-  const [dropdowns, setDropdowns] = useState({ clients: [], states: [], districts: [], clusters: [] });
+  const [dropdowns, setDropdowns] = useState({ clients: [], imes: [], states: [], oms: [], aoms: [], clusters: [], fses: [], technicians: [] });
+  const [loadingDropdowns, setLoadingDropdowns] = useState(false);
   // Panel UI states
   const [selClient, setSelClient] = useState(globalClient);
+  const [selIme, setSelIme] = useState(globalIme);
   const [selState, setSelState] = useState(globalState);
-  const [selDistrict, setSelDistrict] = useState(globalDistrict);
+  const [selOm, setSelOm] = useState(globalOm);
+  const [selAom, setSelAom] = useState(globalAom);
   const [selCluster, setSelCluster] = useState(globalCluster);
+  const [selFse, setSelFse] = useState(globalFse);
+  const [selTechnician, setSelTechnician] = useState(globalTechnician);
   // Applied filters (used for actual list rendering)
   const [appliedClient, setAppliedClient] = useState(globalClient);
+  const [appliedIme, setAppliedIme] = useState(globalIme);
   const [appliedState, setAppliedState] = useState(globalState);
-  const [appliedDistrict, setAppliedDistrict] = useState(globalDistrict);
+  const [appliedOm, setAppliedOm] = useState(globalOm);
+  const [appliedAom, setAppliedAom] = useState(globalAom);
   const [appliedCluster, setAppliedCluster] = useState(globalCluster);
+  const [appliedFse, setAppliedFse] = useState(globalFse);
+  const [appliedTechnician, setAppliedTechnician] = useState(globalTechnician);
   const [appliedDevice, setAppliedDevice] = useState(globalDevice);
 
   const [previewDevices, setPreviewDevices] = useState([]);
@@ -494,19 +508,16 @@ const DashboardScreen = ({ navigation }) => {
   const [openDrop, setOpenDrop] = useState(null); // 'client'|'state'|'district'|'cluster'|'device'|null
   const [dropSearchQuery, setDropSearchQuery] = useState('');
 
-  const filteredDgDashboardData = useMemo(() => {
-    if (!dgDashboardData) return null;
-    const allowedDeviceIds = new Set(devices.map(d => String(d.id || d.deviceid)));
 
-    return {
-      top_moving: (dgDashboardData.top_moving || []).filter(item => allowedDeviceIds.has(String(item.deviceid))),
-      top_idle: (dgDashboardData.top_idle || []).filter(item => allowedDeviceIds.has(String(item.deviceid)))
-    };
-  }, [dgDashboardData, devices]);
 
   // Live timer (updated on screen focus and every second)
   const [currentTime, setCurrentTime] = useState(new Date());
   const [voltageData, setVoltageData] = useState([]);
+
+  const filtersRef = useRef({ appliedClient, appliedIme, appliedState, appliedOm, appliedAom, appliedCluster, appliedFse, appliedTechnician, top10DateRange });
+  useEffect(() => {
+    filtersRef.current = { appliedClient, appliedIme, appliedState, appliedOm, appliedAom, appliedCluster, appliedFse, appliedTechnician, top10DateRange };
+  }, [appliedClient, appliedIme, appliedState, appliedOm, appliedAom, appliedCluster, appliedFse, appliedTechnician, top10DateRange]);
 
   // Update the time every second
   useEffect(() => {
@@ -527,13 +538,21 @@ const DashboardScreen = ({ navigation }) => {
     }
     setError(null);
     try {
-      const { startDate, endDate } = getTop10Dates(top10DateRange);
+      const currentFilters = filtersRef.current;
+      const { startDate, endDate } = getTop10Dates(currentFilters.top10DateRange);
 
       const apiFilters = {};
-      if (appliedClient) apiFilters.client_id = appliedClient.id;
-      if (appliedState) apiFilters.state_id = appliedState.id;
-      if (appliedDistrict) apiFilters.district_id = appliedDistrict.id;
-      if (appliedCluster) apiFilters.cluster_id = appliedCluster.id;
+      if (currentFilters.appliedClient) apiFilters.client_id = currentFilters.appliedClient.id;
+      if (currentFilters.appliedIme) apiFilters.ime = currentFilters.appliedIme.id;
+      if (currentFilters.appliedState) apiFilters.state_id = currentFilters.appliedState.id;
+      if (currentFilters.appliedOm) apiFilters.om_id = currentFilters.appliedOm.id;
+      if (currentFilters.appliedAom) apiFilters.aom_id = currentFilters.appliedAom.id;
+      if (currentFilters.appliedCluster) {
+        apiFilters.cluster_id = currentFilters.appliedCluster.id;
+        apiFilters.district_id = currentFilters.appliedCluster.id;
+      }
+      if (currentFilters.appliedFse) apiFilters.fse_id = currentFilters.appliedFse.id;
+      if (currentFilters.appliedTechnician) apiFilters.technician_id = currentFilters.appliedTechnician.id;
 
       const deviceResp = await fetchDeviceList(apiFilters, isRefresh);
       const devicesArr = deviceResp.devices || [];
@@ -577,29 +596,109 @@ const DashboardScreen = ({ navigation }) => {
     let isActive = true;
     const fetchDependentDropdownsAndPreview = async () => {
       try {
-        const ddResp = await fetchFilterDropdowns(selClient?.id, selState?.id, selDistrict?.id);
+        setLoadingDropdowns(true);
+        const ddResp = await fetchFilterDropdowns(selClient?.id, selState?.id, selOm?.id, selAom?.id, selCluster?.id, selFse?.id, selTechnician?.id);
+
+        // AOM ke base par cluster fetch karo: sirf aomId pass karo taaki backend sahi clusters de
+        // (baaki filters pass karne par backend restrict kar sakta hai)
+        let aomClusters = [];
+        if (selAom?.id && !selCluster) {
+          try {
+            const aomClusterResp = await fetchFilterDropdowns(null, null, null, selAom.id, null, null, null);
+            aomClusters = aomClusterResp.clusters?.length > 0
+              ? aomClusterResp.clusters
+              : (aomClusterResp.districts?.length > 0 ? aomClusterResp.districts : []);
+          } catch (ce) {
+            console.warn('[aomClusters fetch]', ce.message);
+          }
+        }
+
+        const [fetchedOms, fetchedAoms, fetchedFses, fetchedTechs, fetchedImes] = await Promise.all([
+          // OM_Head: state select ke baad, client (emp_type) pass karo superadmin ke liye
+          selState ? fetchDesignationUsers("OM_Head", {
+            state_id: selState.id,
+            ...(selClient ? { emp_type: selClient.id } : {})
+          }) : Promise.resolve([]),
+          // AOM: OM ka superior pass karo
+          selOm ? fetchDesignationUsers("AOM", {
+            superior: selOm.id,
+            state_id: selState?.id,
+            ...(selClient ? { emp_type: selClient.id } : {})
+          }) : Promise.resolve([]),
+          // FSE: AOM ka id superior hai, cluster(district) id dist_id hai
+          (selAom || selCluster) ? fetchDesignationUsers("FSE", {
+            superior: selAom?.id || '',
+            state_id: selState?.id,
+            dist_id: selCluster?.id || '',
+            ...(selClient ? { emp_type: selClient.id } : {})
+          }) : Promise.resolve([]),
+          // Technician: FSE ka id superior hai
+          selFse ? fetchDesignationUsers("Technician", {
+            superior: selFse.id,
+            state_id: selState?.id,
+            dist_id: selCluster?.id || '',
+            ...(selClient ? { emp_type: selClient.id } : {})
+          }) : Promise.resolve([]),
+          ((dropdowns.imes || []).length === 0) ? fetchImeList() : Promise.resolve([]),
+        ]);
+
+        // Cluster list:
+        // AOM selected hai tabhi clusters dikhao — warna [] clear karo
+        // Isse OM change hone par AOM null ho jata hai → cluster turant clear
+        const resolvedClusters = selAom?.id
+          ? (aomClusters.length > 0 ? aomClusters : (ddResp.clusters?.length > 0 ? ddResp.clusters : (ddResp.districts || [])))
+          : [];
+
         if (isActive) {
           setDropdowns(prev => ({
-            clients: prev.clients.length > 0 ? prev.clients : ddResp.clients, // Preserve base clients
-            states: ddResp.states,
-            districts: ddResp.districts,
-            clusters: ddResp.clusters,
+            clients: ddResp.clients || [],
+            imes: fetchedImes.length > 0 ? fetchedImes : (prev.imes || []),
+            states: ddResp.states || [],
+            // OM: State selected → fetchedOms (filtered by state), else []
+            oms: selState
+              ? (fetchedOms.length > 0 ? fetchedOms : (ddResp.oms || []))
+              : [],
+            // AOM: OM selected → fetchedAoms (filtered by superior=om.id), else []
+            // OM change hone par AOM null → [] dikhega (stale data nahi)
+            aoms: selOm
+              ? (fetchedAoms.length > 0 ? fetchedAoms : (ddResp.aoms || []))
+              : [],
+            // Cluster: AOM selected → resolvedClusters (dedicated fetch), else []
+            clusters: resolvedClusters,
+            // FSE: AOM ya Cluster selected → fetchedFses (filtered), else []
+            // AOM change hone par FSE null → [] dikhega (stale nahi)
+            fses: (selAom || selCluster)
+              ? (fetchedFses.length > 0 ? fetchedFses : (ddResp.fses || []))
+              : [],
+            // Technician: FSE selected → fetchedTechs (filtered), else []
+            technicians: selFse
+              ? (fetchedTechs.length > 0 ? fetchedTechs : (ddResp.technicians || []))
+              : [],
           }));
         }
 
-        // Fetch preview devices for the Device dropdown
-        const apiFilters = {};
-        if (selClient) apiFilters.client_id = selClient.id;
-        if (selState) apiFilters.state_id = selState.id;
-        if (selDistrict) apiFilters.district_id = selDistrict.id;
-        if (selCluster) apiFilters.cluster_id = selCluster.id;
 
-        const devResp = await fetchDeviceList(apiFilters);
+        // Fetch preview devices for the Device dropdown
+        // IMPORTANT: /dg_device_latest_json/ sirf yeh params support karta hai:
+        // client_id, ime, state_id, district_id, cluster_id
+        // om_id, aom_id, fse_id, technician_id is endpoint par kaam nahi karte → 0 devices
+        const deviceApiFilters = {};
+        if (selClient) deviceApiFilters.client_id = selClient.id;
+        if (selIme) deviceApiFilters.ime = selIme.id;
+        if (selState) deviceApiFilters.state_id = selState.id;
+        if (selCluster) {
+          deviceApiFilters.cluster_id = selCluster.id;
+          deviceApiFilters.district_id = selCluster.id;
+        }
+
+        const devResp = await fetchDeviceList(deviceApiFilters);
         if (isActive) {
           setPreviewDevices(devResp.devices || []);
         }
       } catch (e) {
         console.warn('Failed to update dependent dropdowns', e);
+      } finally {
+        if (isActive) setLoadingDropdowns(false);
       }
     };
 
@@ -607,7 +706,7 @@ const DashboardScreen = ({ navigation }) => {
     if (devices.length > 0 && showFilterPanel) {
       fetchDependentDropdownsAndPreview();
     }
-  }, [selClient, selState, selDistrict, selCluster, showFilterPanel]);
+  }, [selClient, selIme, selState, selOm, selAom, selCluster, selFse, selTechnician, showFilterPanel]);
 
   // ─── SHARED HELPERS ─────────────────────────────────────────────────────────
   const isDgOn = useCallback(d => {
@@ -665,6 +764,41 @@ const DashboardScreen = ({ navigation }) => {
     });
     return { normal, critical, danger, total };
   }, [voltageData, cascadeFilteredDevices]);
+
+  const padToTop10 = useCallback((existingArr, isDurationString) => {
+    const allowedDeviceIds = new Set(cascadeFilteredDevices.map(d => String(d.id || d.deviceid)));
+    const filtered = (existingArr || []).filter(item => allowedDeviceIds.has(String(item.deviceid)));
+    const existingIds = new Set(filtered.map(item => String(item.deviceid)));
+
+    for (const dev of cascadeFilteredDevices) {
+      if (filtered.length >= 10) break;
+      const did = String(dev.id || dev.deviceid);
+      if (!existingIds.has(did)) {
+        filtered.push({
+          deviceid: did,
+          device_name: dev.name || 'Unknown Device',
+          dg_name: dev.name || 'Unknown Device',
+          total_distance_km: 0,
+          total_dg_move_km: 0,
+          running_hours: 0,
+          total_dg_on: isDurationString ? '00:00:00' : 0,
+          total_dg_idle: isDurationString ? '00:00:00' : 0,
+        });
+        existingIds.add(did);
+      }
+    }
+    return filtered.slice(0, 10);
+  }, [cascadeFilteredDevices]);
+
+  const filteredDgDashboardData = useMemo(() => {
+    if (!dgDashboardData) return null;
+    return {
+      top_moving: padToTop10(dgDashboardData.top_moving, false),
+      top_running: padToTop10(dgDashboardData.top_running, false),
+      top_idle: padToTop10(dgDashboardData.top_idle, true)
+    };
+  }, [dgDashboardData, padToTop10]);
+
 
   // Global metrics reflect the currently applied cascade filters
   const globalMetrics = useMemo(() => {
@@ -743,31 +877,25 @@ const DashboardScreen = ({ navigation }) => {
   const filteredDgTop10Data = useMemo(() => {
     if (!dgDashboardTop10Data) return null;
 
-    // The user requested to directly use the JSON response from the API without any local filtering or padding.
-    // The backend /dg_dashboard_top10_api/ already returns the top 10 devices.
-    const top_moving = (dgDashboardTop10Data.top_moving || []).slice(0, 10);
-    const top_running = (dgDashboardTop10Data.top_running || []).slice(0, 10);
-    const top_idle = (dgDashboardTop10Data.top_idle || []).slice(0, 10);
-
     return {
-      top_moving,
-      top_running,
-      top_idle,
+      top_moving: padToTop10(dgDashboardTop10Data.top_moving, false),
+      top_running: padToTop10(dgDashboardTop10Data.top_running, true),
+      top_idle: padToTop10(dgDashboardTop10Data.top_idle, true),
     };
-  }, [dgDashboardTop10Data]);
+  }, [dgDashboardTop10Data, padToTop10]);
   // Device options for the Device dropdown inside the filter panel
   // Dynamically filtered based on the current panel selection via previewDevices
   const filteredDeviceOptions = useMemo(() => {
     return previewDevices.map(d => ({ id: d.id ?? d.deviceid, name: d.name ?? d.device_name }));
   }, [previewDevices]);
 
-  const activeCascadeCount = [appliedClient, appliedState, appliedDistrict, appliedCluster, appliedDevice].filter(Boolean).length;
+  const activeCascadeCount = [appliedClient, appliedIme, appliedState, appliedOm, appliedAom, appliedCluster, appliedFse, appliedTechnician, appliedDevice].filter(Boolean).length;
 
   const clearCascade = async () => {
     // Reset panel UI state
-    setSelClient(null); setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); setOpenDrop(null);
+    setSelClient(null); setSelIme(null); setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); setOpenDrop(null);
     // Reset applied state
-    setAppliedClient(null); setAppliedState(null); setAppliedDistrict(null); setAppliedCluster(null); setAppliedDevice(null);
+    setAppliedClient(null); setAppliedIme(null); setAppliedState(null); setAppliedOm(null); setAppliedAom(null); setAppliedCluster(null); setAppliedFse(null); setAppliedTechnician(null); setAppliedDevice(null);
     // Clear global filter — other screens will now fetch unfiltered data
     clearGlobalFilter();
     // Re-fetch full unfiltered list from backend
@@ -784,7 +912,7 @@ const DashboardScreen = ({ navigation }) => {
         fetchDgDashboardTop10(top10Params),
         fetchDgDashboard({})
       ]);
-      
+
       setDgDashboardTop10Data(top10Resp || null);
       setDgDashboardData(dgResp || null);
     } catch (e) {
@@ -795,26 +923,50 @@ const DashboardScreen = ({ navigation }) => {
     }
   };
 
+  // ─── APPLY CASCADE ───────────────────────────────────────────────────────
+  // FIX: pehle yahan device list ke liye ek ALAG, chhota "deviceApiFilters"
+  // banaya jaata tha jisme om_id / aom_id / fse_id / technician_id include
+  // hi nahi hote the ("device endpoint sirf client/ime/state/cluster support
+  // karta hai" wali galat assumption). Isi wajah se OM -> AOM -> Cluster
+  // select karke Apply dabane par backend ko incomplete filters milte the
+  // aur device list 0 aa jaati thi — jabki dashboard/top10 calls poore
+  // apiFilters ke saath sahi chal rahe the.
+  //
+  // Ab teeno calls (device list, dg dashboard, top10) EK HI complete
+  // apiFilters object use karte hain — jaisa website (loadDevices) aur
+  // isi screen ke apne loadData() me already ho raha hai. Baaki poora
+  // cascade/reset logic bilkul waisa hi hai, sirf yeh mismatch fix hua hai.
   const applyCascade = async () => {
     // Save selected items for display (badge count, chips)
     setAppliedClient(selClient);
+    setAppliedIme(selIme);
     setAppliedState(selState);
-    setAppliedDistrict(selDistrict);
+    setAppliedOm(selOm);
+    setAppliedAom(selAom);
     setAppliedCluster(selCluster);
+    setAppliedFse(selFse);
+    setAppliedTechnician(selTechnician);
     setAppliedDevice(selDevice);
 
-    // Build query params for backend — client/state/district/cluster fields
-    // are NOT in the device objects so we rely entirely on the backend to filter.
+    // Build ONE complete filter object — used for device list, dg dashboard,
+    // and top10 API calls alike. selDevice is handled client-side afterwards
+    // by cascadeFilteredDevices (matched by ID), so it's not sent to backend.
     const apiFilters = {};
     if (selClient) apiFilters.client_id = selClient.id;
+    if (selIme) apiFilters.ime = selIme.id;
     if (selState) apiFilters.state_id = selState.id;
-    if (selDistrict) apiFilters.district_id = selDistrict.id;
-    if (selCluster) apiFilters.cluster_id = selCluster.id;
-    // selDevice is handled client-side by cascadeFilteredDevices (matched by ID)
+    if (selOm) apiFilters.om_id = selOm.id;
+    if (selAom) apiFilters.aom_id = selAom.id;
+    if (selCluster) {
+      apiFilters.cluster_id = selCluster.id;
+      apiFilters.district_id = selCluster.id;
+    }
+    if (selFse) apiFilters.fse_id = selFse.id;
+    if (selTechnician) apiFilters.technician_id = selTechnician.id;
 
     // Update global filter context — other screens will pick this up
     applyGlobalFilter(
-      { client: selClient, state: selState, district: selDistrict, cluster: selCluster, device: selDevice },
+      { client: selClient, ime: selIme, state: selState, om: selOm, aom: selAom, cluster: selCluster, fse: selFse, technician: selTechnician, device: selDevice },
       apiFilters
     );
 
@@ -822,6 +974,7 @@ const DashboardScreen = ({ navigation }) => {
     try {
       const { startDate, endDate } = getTop10Dates(top10DateRange);
 
+      // ✅ same apiFilters used everywhere now
       const resp = await fetchDeviceList(apiFilters);
       const devs = resp.devices || [];
       setDevices(devs);
@@ -831,7 +984,7 @@ const DashboardScreen = ({ navigation }) => {
         fetchDgDashboardTop10(top10Params),
         fetchDgDashboard(apiFilters)
       ]);
-      
+
       setDgDashboardTop10Data(top10Resp || null);
       setDgDashboardData(dgResp || null);
     } catch (e) {
@@ -850,8 +1003,14 @@ const DashboardScreen = ({ navigation }) => {
       const apiFilters = {};
       if (appliedClient) apiFilters.client_id = appliedClient.id;
       if (appliedState) apiFilters.state_id = appliedState.id;
-      if (appliedDistrict) apiFilters.district_id = appliedDistrict.id;
-      if (appliedCluster) apiFilters.cluster_id = appliedCluster.id;
+      if (appliedOm) apiFilters.om_id = appliedOm.id;
+      if (appliedAom) apiFilters.aom_id = appliedAom.id;
+      if (appliedCluster) {
+        apiFilters.cluster_id = appliedCluster.id;
+        apiFilters.district_id = appliedCluster.id;
+      }
+      if (appliedFse) apiFilters.fse_id = appliedFse.id;
+      if (appliedTechnician) apiFilters.technician_id = appliedTechnician.id;
 
       const top10Params = { from_date: startDate, to_date: endDate, ...apiFilters };
       const top10Resp = await fetchDgDashboardTop10(top10Params);
@@ -874,8 +1033,11 @@ const DashboardScreen = ({ navigation }) => {
   const openFilterPanel = () => {
     setSelClient(appliedClient);
     setSelState(appliedState);
-    setSelDistrict(appliedDistrict);
+    setSelOm(appliedOm);
+    setSelAom(appliedAom);
     setSelCluster(appliedCluster);
+    setSelFse(appliedFse);
+    setSelTechnician(appliedTechnician);
     setSelDevice(appliedDevice);
     setPreviewDevices(devices);
     setShowFilterPanel(true);
@@ -1154,27 +1316,46 @@ const DashboardScreen = ({ navigation }) => {
             <Text style={cStyles.panelTitle}>Filter Devices</Text>
           </View>
           {(() => {
-            const availableStates = (!isSuperadmin || selClient) ? dropdowns.states : [];
-            const availableDistricts = selState ? dropdowns.districts : [];
-            const availableClusters = selDistrict ? dropdowns.clusters : [];
+            const availableStates = dropdowns.states || [];
+            const availableOms = dropdowns.oms || [];
+            const availableAoms = dropdowns.aoms || [];
+            const availableClusters = dropdowns.clusters || [];
+            const availableFses = dropdowns.fses || [];
+            const availableTechnicians = dropdowns.technicians || [];
 
             return (
               <>
-                {isSuperadmin && renderCascadeDropdown('Client', 'account-multiple-outline', 'client', selClient, dropdowns.clients,
-                  (v) => { setSelClient(v); setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); },
-                  () => { setSelClient(null); setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
+                {renderCascadeDropdown('IME', 'office-building-outline', 'ime', selIme, dropdowns.imes || [],
+                  (v) => { setSelIme(v); },
+                  () => { setSelIme(null); }
                 )}
-                {renderCascadeDropdown('State', 'map-outline', 'state', selState, availableStates,
-                  (v) => { setSelState(v); setSelDistrict(null); setSelCluster(null); setSelDevice(null); },
-                  () => { setSelState(null); setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
+                {isSuperadmin && renderCascadeDropdown('Client', 'account-multiple-outline', 'client', selClient, dropdowns.clients || [],
+                  (v) => { setSelClient(v); setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
+                  () => { setSelClient(null); setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
                 )}
-                {renderCascadeDropdown('District', 'city-variant-outline', 'district', selDistrict, availableDistricts,
-                  (v) => { setSelDistrict(v); setSelCluster(null); setSelDevice(null); },
-                  () => { setSelDistrict(null); setSelCluster(null); setSelDevice(null); }
+                {renderCascadeDropdown('Circle', 'map-outline', 'state', selState, availableStates,
+                  (v) => { setSelState(v); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
+                  () => { setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
+                )}
+                {renderCascadeDropdown('O&M Head', 'account-tie', 'om', selOm, availableOms,
+                  (v) => { setSelOm(v); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
+                  () => { setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
+                )}
+                {renderCascadeDropdown('AOM', 'account-supervisor', 'aom', selAom, availableAoms,
+                  (v) => { setSelAom(v); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
+                  () => { setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
                 )}
                 {renderCascadeDropdown('Cluster', 'hexagon-multiple-outline', 'cluster', selCluster, availableClusters,
-                  (v) => { setSelCluster(v); setSelDevice(null); },
-                  () => { setSelCluster(null); setSelDevice(null); }
+                  (v) => { setSelCluster(v); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
+                  () => { setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
+                )}
+                {renderCascadeDropdown('FSE', 'account-wrench-outline', 'fse', selFse, availableFses,
+                  (v) => { setSelFse(v); setSelTechnician(null); setSelDevice(null); },
+                  () => { setSelFse(null); setSelTechnician(null); setSelDevice(null); }
+                )}
+                {renderCascadeDropdown('Technician', 'account-hard-hat', 'technician', selTechnician, availableTechnicians,
+                  (v) => { setSelTechnician(v); setSelDevice(null); },
+                  () => { setSelTechnician(null); setSelDevice(null); }
                 )}
                 {renderCascadeDropdown('Device', 'car', 'device', selDevice, filteredDeviceOptions,
                   (v) => setSelDevice(v),
