@@ -34,11 +34,6 @@ const formatTimeStrWithDays = (timeStr) => {
    const h = parseInt(parts[0], 10) || 0;
    const m = parseInt(parts[1], 10) || 0;
    const s = parts.length > 2 ? parseInt(parts[2], 10) : 0;
-   if (h >= 24) {
-      const d = Math.floor(h / 24);
-      const remH = h % 24;
-      return `${d}d ${String(remH).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-   }
    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
@@ -319,11 +314,6 @@ const SummaryDashboard = ({ onBackToMap, onOpenDaily, onGoToDgReport, deviceName
          const h = Math.floor(totalSeconds / 3600);
          const m = Math.floor((totalSeconds % 3600) / 60);
          const s = (totalSeconds % 60);
-         if (h >= 24) {
-            const d = Math.floor(h / 24);
-            const remH = h % 24;
-            return `${d}d ${String(remH).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-         }
          return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
       };
 

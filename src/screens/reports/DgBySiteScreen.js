@@ -269,9 +269,8 @@ const generateMapHtml = () => `
                     "<div class='dev-field full'><div class='dev-lbl'>Site ID</div><div class='dev-val' style='color:#e2e8f0;letter-spacing:0.3px'>" + (t.site_id || 'N/A') + "</div></div>" +
                     "<div class='dev-field'><div class='dev-lbl'>Type</div><div class='dev-val'>" + typeBadge + "</div></div>" +
                     "<div class='dev-field'><div class='dev-lbl'>Distance</div><div class='dev-val' style='color:#22c55e'>" + distStr + "</div></div>" +
-                    "<div class='dev-field'><div class='dev-lbl'>State</div><div class='dev-val'>" + (t.state || '—') + "</div></div>" +
-                    "<div class='dev-field'><div class='dev-lbl'>District</div><div class='dev-val'>" + (t.district || '—') + "</div></div>" +
-                    "<div class='dev-field full'><div class='dev-lbl'>Cluster</div><div class='dev-val'>" + (t.cluster || '—') + "</div></div>" +
+                    "<div class='dev-field'><div class='dev-lbl'>Circle</div><div class='dev-val'>" + (t.state || '—') + "</div></div>" +
+                    "<div class='dev-field'><div class='dev-lbl'>Cluster</div><div class='dev-val'>" + (t.district || '—') + "</div></div>" +
                     "<div class='dev-field full'><div class='dev-lbl'>Coordinates</div><div class='dev-val' style='color:#64748b;font-size:10px'>" + coordStr + "</div></div>" +
                   "</div>" +
                   "</div>";
@@ -337,8 +336,7 @@ const generateMapHtml = () => `
       } catch (err) {}
     });
     
-    var legendHtml = '<div class="legend"><div class="legend-row"><div class="dot" style="background:#1a3a6b;"></div> Device</div><div class="legend-row"><div class="dot" style="background:#0B66BD;"></div> DG Site</div><div class="legend-row"><div class="dot" style="background:#6B7280;"></div> Non DG</div><div class="legend-row"><div class="dot" style="border:2px solid #0B66BD; background:rgba(11,102,189,0.15);"></div> Radius</div></div>';
-    document.body.insertAdjacentHTML('beforeend', legendHtml);
+    // Removed legendHtml as requested
 
     // Custom zoom buttons
     var zoomHtml = '<div class="zoom-ctrl">'
@@ -398,16 +396,16 @@ const DgBySiteScreen = ({ route, navigation }) => {
           webviewRef.current.postMessage(JSON.stringify({
             type: 'PLOT',
             devices: (reportData.devices || []).map(d => ({
-              latitude:      d.latitude,
-              longitude:     d.longitude,
-              deviceid:      d.id || d.deviceid,
-              name:          d.name || d.dg_name || d.device_name || '',
-              gps_imei:      d.gps_imei || '',
-              uniqueId:      d.uniqueId || d.uniqueid || d.imei || '',
-              status:        d.status || 'unknown',
-              dg_status:     d.dg_status,
+              latitude: d.latitude,
+              longitude: d.longitude,
+              deviceid: d.id || d.deviceid,
+              name: d.name || d.dg_name || d.device_name || '',
+              gps_imei: d.gps_imei || '',
+              uniqueId: d.uniqueId || d.uniqueid || d.imei || '',
+              status: d.status || 'unknown',
+              dg_status: d.dg_status,
               motion_status: d.motion_status,
-              speed:         d.speed,
+              speed: d.speed,
               position_time: d.position_time,
             })),
             towers: filteredTowersList,
@@ -431,21 +429,21 @@ const DgBySiteScreen = ({ route, navigation }) => {
           status: d.status || 'offline',
         }));
         setDevices(active);
-        
+
         if (initialDevice) {
-           const found = active.find(d => d.id === initialDevice.id || d.uniqueId === initialDevice.uniqueId || d.uniqueId === initialDevice.uniqueid);
-           if (found) {
-             setSelectedDevice(found);
-             let str = found.name;
-             if (found.uniqueId) str += ` | ${found.uniqueId}`;
-             if (found.siteId) str += ` | ${found.siteId}`;
-             setSearchQuery(str);
-             
-             // Trigger loadData on next tick so state has time to settle
-             setTimeout(() => {
-                loadData(found, '5');
-             }, 300);
-           }
+          const found = active.find(d => d.id === initialDevice.id || d.uniqueId === initialDevice.uniqueId || d.uniqueId === initialDevice.uniqueid);
+          if (found) {
+            setSelectedDevice(found);
+            let str = found.name;
+            if (found.uniqueId) str += ` | ${found.uniqueId}`;
+            if (found.siteId) str += ` | ${found.siteId}`;
+            setSearchQuery(str);
+
+            // Trigger loadData on next tick so state has time to settle
+            setTimeout(() => {
+              loadData(found, '5');
+            }, 300);
+          }
         }
       } catch (e) {
         Alert.alert('Error', 'Failed to load devices');
@@ -611,9 +609,8 @@ const DgBySiteScreen = ({ route, navigation }) => {
         </View>
 
         <View style={styles.cardRow}>
-          <View style={{ flex: 1 }}><Text style={styles.cardLabel}>STATE</Text><Text style={styles.cardValue}>{item.state || '-'}</Text></View>
-          <View style={{ flex: 1 }}><Text style={styles.cardLabel}>DISTRICT</Text><Text style={styles.cardValue}>{item.district || '-'}</Text></View>
-          <View style={{ flex: 1, alignItems: 'flex-end' }}><Text style={styles.cardLabel}>CLUSTER</Text><Text style={styles.cardValue}>{item.cluster || '-'}</Text></View>
+          <View style={{ flex: 1 }}><Text style={styles.cardLabel}>CIRCLE</Text><Text style={styles.cardValue}>{item.state || '-'}</Text></View>
+          <View style={{ flex: 1, alignItems: 'flex-end' }}><Text style={styles.cardLabel}>CLUSTER</Text><Text style={styles.cardValue}>{item.district || '-'}</Text></View>
         </View>
 
         <View style={[styles.cardRow, { marginBottom: 0, marginTop: 4, paddingTop: 8, borderTopWidth: 1, borderTopColor: '#f1f5f9' }]}>
@@ -637,7 +634,7 @@ const DgBySiteScreen = ({ route, navigation }) => {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.label}>Search Device (Name / IMEI / Site ID)</Text>
+          <Text style={styles.label}>Search Device (DG Name / IMEI)</Text>
           <View style={styles.searchWrapper}>
             <Icon name="magnify" size={18} color="#94a3b8" style={styles.searchIcon} />
             <TextInput
@@ -735,12 +732,12 @@ const DgBySiteScreen = ({ route, navigation }) => {
             <View style={{ flex: 1.5, marginRight: 10 }}>
               <Text style={styles.label}>Radius (km)</Text>
               <View style={[styles.input, { flexDirection: 'row', alignItems: 'center', paddingVertical: 0, paddingHorizontal: 0 }]}>
-                <TouchableOpacity 
+                <TouchableOpacity
                   disabled={parseInt(radius || 0) <= 5}
                   onPress={() => {
                     const newRad = Math.max(5, parseInt(radius || 0) - 5).toString();
                     setRadius(newRad);
-                  }} 
+                  }}
                   style={{ padding: 10, opacity: parseInt(radius || 0) <= 5 ? 0.3 : 1 }}
                 >
                   <Icon name="minus" size={16} color="#64748b" />
@@ -767,12 +764,12 @@ const DgBySiteScreen = ({ route, navigation }) => {
                   placeholder="5"
                 />
                 <Text style={{ fontSize: 12, color: '#64748b', fontWeight: 'bold', marginRight: 5 }}>KM</Text>
-                <TouchableOpacity 
+                <TouchableOpacity
                   disabled={parseInt(radius || 0) >= 30}
                   onPress={() => {
                     const newRad = Math.min(30, parseInt(radius || 0) + 5).toString();
                     setRadius(newRad);
-                  }} 
+                  }}
                   style={{ padding: 10, opacity: parseInt(radius || 0) >= 30 ? 0.3 : 1 }}
                 >
                   <Icon name="plus" size={16} color="#64748b" />

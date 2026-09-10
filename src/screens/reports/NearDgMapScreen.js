@@ -216,10 +216,10 @@ const generateMapHtml = () => {
                 // Speed
                 var speedStr = (d.speed != null ? parseFloat(d.speed).toFixed(2) : '0.00') + ' km/h';
 
-                // IMEI
                 var imeiStr = d.gps_imei || d.uniqueId || d.uniqueid || d.imei || 'N/A';
 
-                var devName = d.name || d.dg_name || d.device_name || ('Device #' + d.deviceid);
+                var devNameRaw = d.name || d.dg_name || d.device_name || ('Device #' + d.deviceid);
+                var devName = String(devNameRaw).replace(/\s*\([^)]*\)/g, '').trim();
                 var siteName = (d.site && d.site.site_name) ? d.site.site_name : (d.site_name || 'N/A');
 
                 var popupHtml =
@@ -291,8 +291,7 @@ const generateMapHtml = () => {
       } catch (err) {}
     });
     
-    var legendHtml = '<div class="legend"><div class="legend-row"><div class="dot" style="background:#1a3a6b;"></div> Device</div><div class="legend-row"><div class="dot" style="background:#0B66BD;"></div> DG Site</div><div class="legend-row"><div class="dot" style="background:#6B7280;"></div> Non DG</div><div class="legend-row"><div class="dot" style="border:2px solid #f59e0b; background:rgba(245,158,11,0.1);"></div> Radius</div></div>';
-    document.body.insertAdjacentHTML('beforeend', legendHtml);
+    // Removed legendHtml as requested
 
     // Custom zoom buttons
     var zoomHtml = '<div class="zoom-ctrl">'

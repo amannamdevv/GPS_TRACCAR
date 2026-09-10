@@ -249,6 +249,7 @@ const DetailsInfoScreen = ({ route, navigation }) => {
           { label: 'DG Name', value: val(src.device_name || device.name), icon: 'tag-outline' },
           { label: 'IMEI', value: val(src.uniqueid || device.uniqueId || device.uniqueid), icon: 'barcode-scan' },
           { label: 'Circle', value: val(src.state_name), icon: 'map' },
+          { label: 'Zone Name', value: val(src.zone_name), icon: 'map-marker-radius' },
           { label: 'Cluster', value: val(src.cluster_name || src.district_name), icon: 'group' },
           { label: 'Near Site Name', value: val(src.site_name), icon: 'office-building' },
           { label: 'Near Site ID', value: val(src.gtms_site_id || src.site_id), icon: 'qrcode' },

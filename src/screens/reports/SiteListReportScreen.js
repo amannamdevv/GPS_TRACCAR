@@ -263,7 +263,7 @@ const SiteListReportScreen = ({ navigation }) => {
           </View>
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>Cluster</Text>
-            <Text style={styles.gridValue}>{cluster}</Text>
+            <Text style={styles.gridValue}>{district}</Text>
           </View>
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>Location</Text>
@@ -271,15 +271,15 @@ const SiteListReportScreen = ({ navigation }) => {
           </View>
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>AOM</Text>
-            <Text style={styles.gridValue} numberOfLines={1}>{item.aom_name || item.level1_name || '—'}</Text>
+            <Text style={styles.gridValue} numberOfLines={1}>{item.aom_name || item.level4_name || '—'}</Text>
           </View>
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>FSE</Text>
-            <Text style={styles.gridValue} numberOfLines={1}>{item.fse_name || item.level2_name || '—'}</Text>
+            <Text style={styles.gridValue} numberOfLines={1}>{item.fse_name || item.level5_name || '—'}</Text>
           </View>
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>Technician</Text>
-            <Text style={styles.gridValue} numberOfLines={1}>{item.technician_name || item.level3_name || '—'}</Text>
+            <Text style={styles.gridValue} numberOfLines={1}>{item.technician_name || item.level6_name || '—'}</Text>
           </View>
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>Created</Text>
