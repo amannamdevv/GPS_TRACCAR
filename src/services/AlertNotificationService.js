@@ -490,7 +490,9 @@ class AlertNotificationService {
       }
     } catch (e) {}
 
-    const spaced = text.replace(/(\d)/g, '$1 ');
+    // Replace '0' with 'zero' so TTS says "zero" instead of "O"
+    const zeroFixed = text.replace(/0/g, ' zero ');
+    const spaced = zeroFixed.replace(/([1-9])/g, '$1 ');
     try { Tts.stop(); setTimeout(() => Tts.speak(spaced), 400); } catch (_) { }
   }
 

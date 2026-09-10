@@ -165,7 +165,7 @@ const SummaryDashboard = ({ onBackToMap, onOpenDaily, onGoToDgReport, deviceName
             start = moment().subtract(15, 'days').startOf('day');
             break;
          case '1 Month':
-            start = moment().subtract(1, 'month').subtract(1, 'days').startOf('day');
+            start = moment().subtract(30, 'days').startOf('day');
             break;
       }
       

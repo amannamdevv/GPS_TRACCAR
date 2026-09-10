@@ -124,9 +124,30 @@ const SiteListReportScreen = ({ navigation }) => {
       
       if (dgCount === undefined && nonDgCount === undefined) {
          if (resp.total_records !== undefined && resp.total_records > 0) {
-            // Rough estimate based on filtered records
-            dgCount = Math.round(resp.total_records * 0.63);
-            nonDgCount = resp.total_records - dgCount;
+            if (pageNumber === 1) {
+              try {
+                if (params.site_type && params.site_type.toLowerCase().includes('non')) {
+                  dgCount = 0;
+                  nonDgCount = resp.total_records;
+                } else if (params.site_type && params.site_type.toLowerCase().includes('dg')) {
+                  dgCount = resp.total_records;
+                  nonDgCount = 0;
+                } else {
+                  // Fetch exact DG count by querying site_type 'DG Site'
+                  const dgResp = await fetchSiteList({ ...params, site_type: 'DG Site', limit: 1, page: 1 });
+                  dgCount = dgResp.total_records !== undefined ? dgResp.total_records : Math.round(resp.total_records * 0.63);
+                  nonDgCount = resp.total_records - dgCount;
+                }
+              } catch (e) {
+                // Fallback to estimation
+                dgCount = Math.round(resp.total_records * 0.63);
+                nonDgCount = resp.total_records - dgCount;
+              }
+            } else {
+              // Use existing state for subsequent pages
+              dgCount = dgSites;
+              nonDgCount = nonDgSites;
+            }
          } else {
             dgCount = 0;
             nonDgCount = 0;
@@ -237,20 +258,28 @@ const SiteListReportScreen = ({ navigation }) => {
             <Text style={styles.gridValue}>{client}</Text>
           </View>
           <View style={styles.gridItem}>
-            <Text style={styles.gridLabel}>State</Text>
+            <Text style={styles.gridLabel}>Circle</Text>
             <Text style={styles.gridValue}>{state}</Text>
-          </View>
-          <View style={styles.gridItem}>
-            <Text style={styles.gridLabel}>District</Text>
-            <Text style={styles.gridValue}>{district}</Text>
           </View>
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>Cluster</Text>
             <Text style={styles.gridValue}>{cluster}</Text>
           </View>
           <View style={styles.gridItem}>
-            <Text style={styles.gridLabel}>Coordinates</Text>
+            <Text style={styles.gridLabel}>Location</Text>
             <Text style={styles.gridValue}>{lat}, {lon}</Text>
+          </View>
+          <View style={styles.gridItem}>
+            <Text style={styles.gridLabel}>AOM</Text>
+            <Text style={styles.gridValue} numberOfLines={1}>{item.aom_name || item.level1_name || '—'}</Text>
+          </View>
+          <View style={styles.gridItem}>
+            <Text style={styles.gridLabel}>FSE</Text>
+            <Text style={styles.gridValue} numberOfLines={1}>{item.fse_name || item.level2_name || '—'}</Text>
+          </View>
+          <View style={styles.gridItem}>
+            <Text style={styles.gridLabel}>Technician</Text>
+            <Text style={styles.gridValue} numberOfLines={1}>{item.technician_name || item.level3_name || '—'}</Text>
           </View>
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>Created</Text>
@@ -259,18 +288,6 @@ const SiteListReportScreen = ({ navigation }) => {
           <View style={styles.gridItem}>
             <Text style={styles.gridLabel}>Updated</Text>
             <Text style={styles.gridValue}>{formatDate(item.updated_date)}</Text>
-          </View>
-          <View style={styles.gridItem}>
-            <Text style={styles.gridLabel}>Level 1</Text>
-            <Text style={styles.gridValue} numberOfLines={1}>{item.level1_name || '—'}</Text>
-          </View>
-          <View style={styles.gridItem}>
-            <Text style={styles.gridLabel}>Level 2</Text>
-            <Text style={styles.gridValue} numberOfLines={1}>{item.level2_name || '—'}</Text>
-          </View>
-          <View style={styles.gridItem}>
-            <Text style={styles.gridLabel}>Level 3</Text>
-            <Text style={styles.gridValue} numberOfLines={1}>{item.level3_name || '—'}</Text>
           </View>
         </View>
 
@@ -358,28 +375,29 @@ const SiteListReportScreen = ({ navigation }) => {
       )}
 
       {/* List */}
-      {loading && data.length === 0 ? (
-        <View style={styles.centerBox}>
-          <ActivityIndicator size="large" color="#1a3a6b" />
-          <Text style={styles.loadingText}>Loading sites...</Text>
-        </View>
-      ) : data.length === 0 ? (
-        <View style={styles.centerBox}>
-          <Icon name="tower-cell" size={48} color="#cbd5e1" />
-          <Text style={styles.emptyText}>No sites found.</Text>
-        </View>
-      ) : (
-        <FlatList
-          data={data}
-          keyExtractor={(item, index) => (item.site_id || item.siteId || index) + '-' + index}
-          renderItem={renderItem}
-          contentContainerStyle={styles.listContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1a3a6b']} />}
-          onEndReached={loadMore}
-          onEndReachedThreshold={0.5}
-          ListFooterComponent={hasMore ? <ActivityIndicator size="small" color="#1a3a6b" style={{marginVertical: 10}} /> : <View style={{height: 20}} />}
-        />
-      )}
+      <FlatList
+        data={data}
+        keyExtractor={(item, index) => (item.site_id || item.siteId || index) + '-' + index}
+        renderItem={renderItem}
+        contentContainerStyle={[styles.listContent, data.length === 0 && { flexGrow: 1 }]}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#1a3a6b']} />}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
+        ListFooterComponent={hasMore ? <ActivityIndicator size="small" color="#1a3a6b" style={{marginVertical: 10}} /> : <View style={{height: 20}} />}
+        ListEmptyComponent={
+          loading ? (
+            <View style={styles.centerBox}>
+              <ActivityIndicator size="large" color="#1a3a6b" />
+              <Text style={styles.loadingText}>Loading sites...</Text>
+            </View>
+          ) : (
+            <View style={styles.centerBox}>
+              <Icon name="tower-cell" size={48} color="#cbd5e1" />
+              <Text style={styles.emptyText}>No sites found.</Text>
+            </View>
+          )
+        }
+      />
     </View>
   );
 };

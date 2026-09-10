@@ -728,9 +728,10 @@ export const fetchDgDashboard = async (options = {}) => {
     if (options.aom_id) params.aom_id = options.aom_id;
     // cluster_id and district_id both map to dist_id on backend
     const clustVal = options.cluster_id || options.district_id;
-    if (clustVal) { params.dist_id = clustVal; params.cluster_id = clustVal; }
+    if (clustVal) { params.dist_id = clustVal; }
     if (options.fse_id) params.fse_id = options.fse_id;
     if (options.technician_id) params.technician_id = options.technician_id;
+    if (options.ime) params.ime = options.ime;
 
     const resp = await webApi.get('/dg_dashboard/', {
       params,
@@ -757,9 +758,10 @@ export const fetchDgDashboardTop10 = async (options = {}) => {
     if (options.aom_id) params.aom_id = options.aom_id;
     // cluster_id and district_id both map to dist_id on backend
     const clustVal = options.cluster_id || options.district_id;
-    if (clustVal) { params.dist_id = clustVal; params.cluster_id = clustVal; }
+    if (clustVal) { params.dist_id = clustVal; }
     if (options.fse_id) params.fse_id = options.fse_id;
     if (options.technician_id) params.technician_id = options.technician_id;
+    if (options.ime) params.ime = options.ime;
 
     const resp = await webApi.get('/dg_dashboard_top10_api/', {
       params,
@@ -779,19 +781,39 @@ export const fetchDgDashboardTop10 = async (options = {}) => {
 };
 
 // ─── fetchDgDeviceDetail ───────────────────────────────────────────────────
-// Powers the "Device Information" screen (mirrors website's DG List /
-// dg_device_detail_json). Passing a generous limit so the single-device
-// find() on the client side has the full list to search through.
+// Powers the "Device Information" screen.
 export const fetchDgDeviceDetail = async (extraParams = {}) => {
   try {
     const resp = await webApi.get('/dg_device_detail/', {
-      params: { limit: 500, ...extraParams },
+      params: {
+        limit: 500,
+        om_id: '',
+        aom_id: '',
+        fse_id: '',
+        technician_id: '',
+        ime: '',
+        client_id: '',
+        state_id: '',
+        dist_id: '',
+        cluster_id: '',
+        ...extraParams,
+      },
       timeout: 20000,
     });
     return resp.data || { status: false, data: [] };
   } catch (e) {
     console.warn('[fetchDgDeviceDetail]', e.message);
     return { status: false, data: [], error: e.message };
+  }
+};
+
+export const clearDashboardFilter = async () => {
+  try {
+    const resp = await webApi.get('/clear_dashboard_filter/');
+    return resp.data;
+  } catch (e) {
+    console.warn('[clearDashboardFilter]', e.message);
+    return null;
   }
 };
 
@@ -823,8 +845,16 @@ export const fetchDgBySiteReport = async (params = {}) => {
 // ─── fetchSiteList ───────────────────────────────────────────────────────────
 export const fetchSiteList = async (params = {}) => {
   try {
+    const normalized = { ...params };
+    const clustVal = normalized.cluster_id || normalized.district_id || normalized.dist_id;
+    if (clustVal) {
+      normalized.dist_id = clustVal;
+    }
+    delete normalized.cluster_id;
+    delete normalized.district_id;
+
     const resp = await webApi.get('/site_list_api/', {
-      params,
+      params: normalized,
       timeout: 20000
     });
     return resp.data;

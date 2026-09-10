@@ -87,8 +87,8 @@ android {
         applicationId "com.stpl.gpstracker"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 16
-        versionName "2.3"
+        versionCode 18
+        versionName "2.5"
     }
 signingConfigs {
     debug {

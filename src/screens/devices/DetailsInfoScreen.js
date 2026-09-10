@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, RefreshC
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Header from '../../components/Header';
 import moment from 'moment';
-import { fetchDgDeviceDetail } from '../../api/webApi';
+import { fetchDgDeviceDetail, clearDashboardFilter } from '../../api/webApi';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 const fmt = (dateStr) => {
@@ -37,6 +37,12 @@ const val = (v, suffix = '') => {
 const numVal = (v, suffix = '') => {
   if (v === null || v === undefined || v === '' || isNaN(Number(v))) return 'N/A';
   return `${Number(v).toFixed(2)}${suffix}`;
+};
+
+// Normalize a value for loose matching: trim + lowercase + strip non-alphanumerics
+const norm = (v) => {
+  if (v === null || v === undefined) return '';
+  return String(v).trim().toLowerCase();
 };
 
 // ─── Row Component ────────────────────────────────────────────────────────
@@ -93,57 +99,75 @@ const Section = ({ title, rows }) => (
 // ─── Main Screen ──────────────────────────────────────────────────────────
 const DetailsInfoScreen = ({ route, navigation }) => {
   const { device } = route.params;
-  const [d, setD] = useState(null);       // dgDetail row from dg_device_detail_json
+  const [d, setD] = useState(null);       // matched row from dg_device_detail (full backend record)
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [notFound, setNotFound] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [debugMsg, setDebugMsg] = useState(null); // visible-on-screen debug info when match fails
 
   const loadData = async (isRefresh = false) => {
     isRefresh ? setRefreshing(true) : setLoading(true);
-    setNotFound(false);
     setErrorMsg(null);
+    setDebugMsg(null);
     try {
-      const deviceId = device.id || device.deviceid;
-      console.log('[DetailsInfoScreen] calling fetchDgDeviceDetail with deviceid:', deviceId, 'uniqueId:', device.uniqueId || device.uniqueid);
-      const resp = await fetchDgDeviceDetail({ deviceid: deviceId });
-      console.log('[DetailsInfoScreen] API response status:', resp?.status, 'data count:', Array.isArray(resp?.data) ? resp.data.length : 'NOT_ARRAY', 'error:', resp?.error);
+      await clearDashboardFilter().catch(() => { });
+
+      const targetDeviceId = device.deviceid || device.id || device.tc_device_id;
+      const resp = await fetchDgDeviceDetail({ deviceid: targetDeviceId });
+
       if (resp?.status === false) {
         setErrorMsg(resp.error || 'Server se data nahi mila. Login/session check karein.');
       }
       const list = Array.isArray(resp?.data) ? resp.data : [];
-      if (list.length > 0) {
-        console.log('[DetailsInfoScreen] First item deviceid:', list[0].deviceid, 'uniqueid:', list[0].uniqueid);
-      }
-      const found = list.find(item =>
-        String(item.deviceid) === String(device.id) ||
-        String(item.deviceid) === String(device.deviceid) ||
-        String(item.uniqueid) === String(device.uniqueId) ||
-        String(item.uniqueid) === String(device.uniqueid)
-      );
+
+      // Candidate identifiers coming from the device prop (navigation params).
+      // Different screens in the app pass slightly different shapes, so we
+      // collect every possible id/imei field we might have been given.
+      const candidateIds = [device.id, device.deviceid, device.tc_device_id]
+        .filter(v => v !== null && v !== undefined && v !== '')
+        .map(v => String(v).trim());
+
+      const candidateImeis = [device.uniqueId, device.uniqueid, device.imei, device.IMEI]
+        .filter(v => v !== null && v !== undefined && v !== '')
+        .map(norm);
+
+      const found = list.find(item => {
+        const itemIds = [item.deviceid, item.id, item.tc_device_id]
+          .filter(v => v !== null && v !== undefined)
+          .map(v => String(v).trim());
+        const itemImei = norm(item.uniqueid);
+
+        const idMatch = itemIds.some(iid => candidateIds.includes(iid));
+        const imeiMatch = itemImei && candidateImeis.includes(itemImei);
+
+        return idMatch || imeiMatch;
+      });
+
       if (found) {
-        console.log('[DetailsInfoScreen] ✅ Device found! deviceid:', found.deviceid, 'name:', found.device_name);
         setD(found);
+      } else if (list.length === 1) {
+        // If find fails but backend returned exactly 1 record, trust the backend filter!
+        setD(list[0]);
       } else {
-        console.log('[DetailsInfoScreen] ❌ Device NOT found in list of', list.length, 'items');
-        // If API returned data but find() missed, use first item (since we filtered by deviceid)
-        if (list.length === 1) {
-          console.log('[DetailsInfoScreen] Using first (only) item as fallback');
-          setD(list[0]);
-        } else {
-          setNotFound(true);
-        }
+        setD(null);
+        // setDebugMsg(
+        //   `Match nahi mila.\n` +
+        //   `Target device ID passed: ${targetDeviceId}\n` +
+        //   `Device prop: id=${device.id}, deviceid=${device.deviceid}, tc_device_id=${device.tc_device_id}, uniqueId=${device.uniqueId}\n` +
+        //   `API se total ${list.length} records aaye. Pehle 3 records: ` +
+        //   list.slice(0, 3).map(it => `[${it.deviceid} / ${it.uniqueid}]`).join(', ')
+        // );
       }
     } catch (e) {
       console.warn('[DetailsInfoScreen] load error:', e.message);
-      setErrorMsg(e.message);
+      setErrorMsg(e.message || 'Kuch galat ho gaya.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  useEffect(() => { loadData(); }, [device]);
+  useEffect(() => { loadData(); }, [device?.id, device?.deviceid, device?.uniqueId, device?.uniqueid]);
 
   if (loading) {
     return (
@@ -157,7 +181,7 @@ const DetailsInfoScreen = ({ route, navigation }) => {
     );
   }
 
-  // src = live dg_device_detail_json row. Fallback to device prop only if API row missing.
+  // src = live dg_device_detail row. Fallback to device prop only if API row missing.
   const src = d || {};
 
   const statusRaw = src.status || device.status || '';
@@ -207,31 +231,28 @@ const DetailsInfoScreen = ({ route, navigation }) => {
             <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           </View>
         </View>
-
-        {notFound && (
-          <View style={styles.warnBox}>
-            <Icon name="alert-circle-outline" size={20} color="#b45309" />
-            <Text style={styles.warnText}>
-              Is device ka record dg_device_detail API me nahi mila. Neeche wali basic info hi dikh rahi hai — server/session issue ho sakta hai.
-            </Text>
-          </View>
-        )}
         {errorMsg && (
           <View style={styles.warnBox}>
             <Icon name="wifi-alert" size={20} color="#b45309" />
             <Text style={styles.warnText}>{errorMsg}</Text>
           </View>
         )}
+        {debugMsg && (
+          <View style={styles.debugBox}>
+            <Icon name="bug-outline" size={20} color="#7c2d12" />
+            <Text style={styles.debugText}>{debugMsg}</Text>
+          </View>
+        )}
 
         {/* ── Device Information ─────────────────────────── */}
         <Section title="📑  Device Information" rows={[
-          { label: 'Device Name', value: val(src.device_name || device.name), icon: 'tag-outline' },
+          { label: 'DG Name', value: val(src.device_name || device.name), icon: 'tag-outline' },
           { label: 'IMEI', value: val(src.uniqueid || device.uniqueId || device.uniqueid), icon: 'barcode-scan' },
-          { label: 'Circle Name', value: val(src.state_name), icon: 'map' },
-          { label: 'Zone Name', value: val(src.zone_name), icon: 'map-marker-path' },
-          { label: 'Cluster Name', value: val(src.district_name), icon: 'group' },
-          { label: 'Site Name', value: val(src.site_name), icon: 'office-building' },
-          { label: 'Site ID', value: siteIdValue, icon: 'qrcode' },
+          { label: 'Circle', value: val(src.state_name), icon: 'map' },
+          { label: 'Cluster', value: val(src.cluster_name || src.district_name), icon: 'group' },
+          { label: 'Near Site Name', value: val(src.site_name), icon: 'office-building' },
+          { label: 'Near Site ID', value: val(src.gtms_site_id || src.site_id), icon: 'qrcode' },
+          { label: 'Near Site distance (KM)', value: numVal(src.site_distance, ''), icon: 'map-marker-distance' },
         ]} />
 
         {/* ── DG Status & Aging ──────────────────────────── */}
@@ -239,7 +260,7 @@ const DetailsInfoScreen = ({ route, navigation }) => {
           { label: 'DG Status', value: ignStatus, icon: 'lightning-bolt', color: ignColor, sub: ignTime ? fmt(ignTime) : null },
           { label: 'Aging For ON/OFF', value: timeAgo(ignTime), icon: 'timer-sand', color: ignColor },
           { label: 'DG Move Status', value: motionLabel, icon: 'run', color: motionColor, sub: src.motion_time ? fmt(src.motion_time) : null },
-          { label: 'Aging For Move', value: timeAgo(src.motion_time), icon: 'timer-sand', color: motionColor },
+          { label: 'Aging For move', value: timeAgo(src.motion_time), icon: 'timer-sand', color: motionColor },
         ]} />
 
         {/* ── Telemetry ───────────────────────────────────── */}
@@ -247,20 +268,21 @@ const DetailsInfoScreen = ({ route, navigation }) => {
           { label: 'In GPS Batt', value: src.battery_level != null ? `${src.battery_level}%` : 'N/A', icon: 'battery', color: src.battery_level > 20 ? '#10b981' : '#ef4444' },
           { label: 'GSM Signal', value: src.rssi != null ? `${src.rssi}` : 'N/A', icon: 'signal', color: '#10b981' },
           { label: 'Charge Status', value: isCharging ? 'Charging' : 'Not Charging', icon: 'power-plug', color: isCharging ? '#10b981' : '#ef4444' },
-          { label: 'Ext Batt Volt', value: numVal(src.adc1, ' V'), icon: 'car-battery' },
-          { label: 'CNN Satellite', value: src.sat != null ? `${src.sat}` : 'N/A', icon: 'satellite-uplink', color: '#3b82f6' },
+          { label: 'Ext Batt volt', value: numVal(src.adc1, ' V'), icon: 'car-battery' },
+          { label: 'CNN Satelite', value: src.sat != null ? `${src.sat}` : 'N/A', icon: 'satellite-uplink', color: '#3b82f6' },
         ]} />
 
         {/* ── Communication ───────────────────────────────── */}
         <Section title="🕒  Communication" rows={[
           { label: 'Last Comm. Time', value: fmt(src.lastupdate || src.updated_at), icon: 'clock' },
-          { label: 'Aging Last Comm.', value: timeAgo(src.lastupdate || src.updated_at), icon: 'timer-sand' },
-          { label: 'GPS Install', value: src.gps_install_date ? moment(src.gps_install_date).format('DD/MM/YYYY') : 'N/A', icon: 'calendar-check' },
-          { label: 'GPS Install Site', value: val(src.gps_indus_id), icon: 'office-building-marker' },
+          { label: 'Aging Last Comm. Time', value: timeAgo(src.lastupdate || src.updated_at), icon: 'timer-sand' },
+          { label: 'GPS Install Date', value: src.gps_install_date ? moment(src.gps_install_date).format('DD/MM/YYYY') : 'N/A', icon: 'calendar-check' },
+          { label: 'GPS Install Site ID', value: val(src.gps_indus_id), icon: 'office-building-marker' },
         ]} />
 
         {/* ── Assigned Team ────────────────────────────────── */}
         <Section title="👥  Assigned Team" rows={[
+          { label: 'Ime', value: val(src.ime), icon: 'domain' },
           { label: 'O&M Head', value: val(src.aid_l3_name), icon: 'account-tie' },
           { label: 'AOM', value: val(src.aid_l4_name), icon: 'account-supervisor' },
           { label: 'FSE', value: val(src.aid_l5_name), icon: 'account-wrench' },
@@ -298,6 +320,9 @@ const styles = StyleSheet.create({
 
   warnBox: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#fffbeb', borderWidth: 1, borderColor: '#fde68a', borderRadius: 12, padding: 12, marginBottom: 14, gap: 8 },
   warnText: { flex: 1, fontSize: 12, color: '#92400e', fontWeight: '500' },
+
+  debugBox: { flexDirection: 'row', alignItems: 'flex-start', backgroundColor: '#fff1f2', borderWidth: 1, borderColor: '#fecdd3', borderRadius: 12, padding: 12, marginBottom: 14, gap: 8 },
+  debugText: { flex: 1, fontSize: 11, color: '#7c2d12', fontWeight: '500', lineHeight: 16 },
 
   section: { marginBottom: 20 },
   sectionHeader: { fontSize: 12, fontWeight: '700', color: '#64748b', marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.8 },

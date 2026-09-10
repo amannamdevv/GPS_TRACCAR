@@ -565,7 +565,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
           <View style={styles.expandedDrawer}>
             {[
               { label: '🌐 Circle', value: item.circle || 'N/A' },
-              { label: '📍 Area / District', value: `${item.area || 'N/A'} / ${item.district || 'N/A'}` },
+              { label: '📍 Cluster', value: item.area || 'N/A' },
               { label: '🏫 Site Name / Type', value: `${item.site_name || 'N/A'} (${item.site_type || 'N/A'})` },
               { label: '🗼 Indus ID (100m)', value: item.indus_id_within_100m || 'None' },
               { label: '📞 IME', value: item.ome_name_as_erp || 'N/A' },
@@ -906,7 +906,7 @@ const DgStatusLogScreen = ({ route, navigation }) => {
             </View>
           </View>
         )}
-        
+
         {showFilters && (
           <TouchableOpacity
             activeOpacity={1}

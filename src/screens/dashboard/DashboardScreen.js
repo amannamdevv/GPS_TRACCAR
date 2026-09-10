@@ -508,7 +508,10 @@ const DashboardScreen = ({ navigation }) => {
   const [openDrop, setOpenDrop] = useState(null); // 'client'|'state'|'district'|'cluster'|'device'|null
   const [dropSearchQuery, setDropSearchQuery] = useState('');
 
-
+  // Bumped every time a cascade selection changes upstream of a dependent
+  // dropdown, so in-flight fetches for a stale selection can be identified
+  // and ignored even if they resolve out of order.
+  const cascadeRequestIdRef = useRef(0);
 
   // Live timer (updated on screen focus and every second)
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -591,9 +594,49 @@ const DashboardScreen = ({ navigation }) => {
     return () => subscription.remove();
   }, [loadData]);
 
+  // ─── CLEAR DOWNSTREAM DROPDOWN OPTIONS IMMEDIATELY ───────────────────────
+  // Whenever a parent-level filter changes (client/state/om/aom/cluster/fse),
+  // the dropdown OPTION LISTS for everything below it must be cleared right
+  // away (synchronously), not just the selected values. Otherwise, if the
+  // user re-opens a dependent dropdown before the background fetch below
+  // finishes, they will briefly (or, on a slow network, for a while) see the
+  // PREVIOUS parent's options — e.g. changing OM but still seeing the old
+  // OM's AOM list. Clearing here guarantees every dropdown always reflects
+  // only the currently selected parent chain, no matter how fast the user
+  // clicks through client → state → om → aom → cluster → fse → technician.
+  const clearDownstreamOptions = useCallback((level) => {
+    setDropdowns(prev => {
+      const next = { ...prev };
+      if (level === 'client' || level === 'state') {
+        next.oms = []; next.aoms = []; next.clusters = []; next.fses = []; next.technicians = [];
+      }
+      if (level === 'om') {
+        next.aoms = []; next.clusters = []; next.fses = []; next.technicians = [];
+      }
+      if (level === 'aom') {
+        next.clusters = []; next.fses = []; next.technicians = [];
+      }
+      if (level === 'cluster') {
+        next.fses = []; next.technicians = [];
+      }
+      if (level === 'fse') {
+        next.technicians = [];
+      }
+      return next;
+    });
+    // Device options are always cascade-scoped, so clear them too until the
+    // fresh preview-device fetch (below) completes for the new selection.
+    setPreviewDevices([]);
+  }, []);
+
   // Dynamically update dependent dropdowns and preview devices when panel selections change
   useEffect(() => {
     let isActive = true;
+    // Snapshot a request id for this run so a late-resolving fetch from an
+    // older (now-stale) selection can never overwrite newer state, even if
+    // network responses arrive out of order.
+    const requestId = ++cascadeRequestIdRef.current;
+
     const fetchDependentDropdownsAndPreview = async () => {
       try {
         setLoadingDropdowns(true);
@@ -649,7 +692,11 @@ const DashboardScreen = ({ navigation }) => {
           ? (aomClusters.length > 0 ? aomClusters : (ddResp.clusters?.length > 0 ? ddResp.clusters : (ddResp.districts || [])))
           : [];
 
-        if (isActive) {
+        // Bail out if a newer selection has already superseded this fetch —
+        // this is the key guard that stops "purana data" (stale parent's
+        // options) from ever landing in state after the user has already
+        // moved on to a different OM/AOM/Cluster/etc.
+        if (isActive && requestId === cascadeRequestIdRef.current) {
           setDropdowns(prev => ({
             clients: ddResp.clients || [],
             imes: fetchedImes.length > 0 ? fetchedImes : (prev.imes || []),
@@ -692,13 +739,13 @@ const DashboardScreen = ({ navigation }) => {
         }
 
         const devResp = await fetchDeviceList(deviceApiFilters);
-        if (isActive) {
+        if (isActive && requestId === cascadeRequestIdRef.current) {
           setPreviewDevices(devResp.devices || []);
         }
       } catch (e) {
         console.warn('Failed to update dependent dropdowns', e);
       } finally {
-        if (isActive) setLoadingDropdowns(false);
+        if (isActive && requestId === cascadeRequestIdRef.current) setLoadingDropdowns(false);
       }
     };
 
@@ -706,6 +753,8 @@ const DashboardScreen = ({ navigation }) => {
     if (devices.length > 0 && showFilterPanel) {
       fetchDependentDropdownsAndPreview();
     }
+
+    return () => { isActive = false; };
   }, [selClient, selIme, selState, selOm, selAom, selCluster, selFse, selTechnician, showFilterPanel]);
 
   // ─── SHARED HELPERS ─────────────────────────────────────────────────────────
@@ -894,6 +943,12 @@ const DashboardScreen = ({ navigation }) => {
   const clearCascade = async () => {
     // Reset panel UI state
     setSelClient(null); setSelIme(null); setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); setOpenDrop(null);
+    // Immediately clear every dependent dropdown's option list too, so the
+    // panel never flashes a previous selection's leftover options.
+    setDropdowns(prev => ({ ...prev, oms: [], aoms: [], clusters: [], fses: [], technicians: [] }));
+    setPreviewDevices([]);
+    // Invalidate any in-flight cascade fetch so it can't overwrite this reset.
+    cascadeRequestIdRef.current += 1;
     // Reset applied state
     setAppliedClient(null); setAppliedIme(null); setAppliedState(null); setAppliedOm(null); setAppliedAom(null); setAppliedCluster(null); setAppliedFse(null); setAppliedTechnician(null); setAppliedDevice(null);
     // Clear global filter — other screens will now fetch unfiltered data
@@ -1087,28 +1142,40 @@ const DashboardScreen = ({ navigation }) => {
                 </TouchableOpacity>
               )}
             </View>
-            <FlatList
-              data={options.filter(opt => (opt.name || '').toLowerCase().includes(dropSearchQuery.toLowerCase()))}
-              keyExtractor={item => item.id?.toString() || Math.random().toString()}
-              style={{ maxHeight: 200 }}
-              nestedScrollEnabled={true}
-              keyboardShouldPersistTaps="handled"
-              initialNumToRender={15}
-              maxToRenderPerBatch={20}
-              ListHeaderComponent={
-                <TouchableOpacity style={cStyles.optionItem} onPress={() => { onSelect(null); setOpenDrop(null); setDropSearchQuery(''); }}>
-                  <Text style={[cStyles.optionText, !value && { color: '#1565C0', fontWeight: '700' }]}>All {label}s</Text>
-                </TouchableOpacity>
-              }
-              renderItem={({ item: opt }) => (
-                <TouchableOpacity
-                  style={[cStyles.optionItem, value?.id === opt.id && cStyles.optionItemActive]}
-                  onPress={() => { onSelect(opt); setOpenDrop(null); setDropSearchQuery(''); }}
-                >
-                  <Text style={[cStyles.optionText, value?.id === opt.id && cStyles.optionTextActive]}>{opt.name}</Text>
-                </TouchableOpacity>
-              )}
-            />
+            {loadingDropdowns && (key === 'om' || key === 'aom' || key === 'cluster' || key === 'fse' || key === 'technician' || key === 'device') && options.length === 0 ? (
+              <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#1565C0" />
+                <Text style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>Loading {label}s...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={options.filter(opt => (opt.name || '').toLowerCase().includes(dropSearchQuery.toLowerCase()))}
+                keyExtractor={item => item.id?.toString() || Math.random().toString()}
+                style={{ maxHeight: 200 }}
+                nestedScrollEnabled={true}
+                keyboardShouldPersistTaps="handled"
+                initialNumToRender={15}
+                maxToRenderPerBatch={20}
+                ListHeaderComponent={
+                  <TouchableOpacity style={cStyles.optionItem} onPress={() => { onSelect(null); setOpenDrop(null); setDropSearchQuery(''); }}>
+                    <Text style={[cStyles.optionText, !value && { color: '#1565C0', fontWeight: '700' }]}>All {label}s</Text>
+                  </TouchableOpacity>
+                }
+                renderItem={({ item: opt }) => (
+                  <TouchableOpacity
+                    style={[cStyles.optionItem, value?.id === opt.id && cStyles.optionItemActive]}
+                    onPress={() => { onSelect(opt); setOpenDrop(null); setDropSearchQuery(''); }}
+                  >
+                    <Text style={[cStyles.optionText, value?.id === opt.id && cStyles.optionTextActive]}>{opt.name}</Text>
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                    <Text style={{ fontSize: 12, color: '#94a3b8' }}>No {label}s found</Text>
+                  </View>
+                }
+              />
+            )}
           </View>
         )}
       </View>
@@ -1311,59 +1378,109 @@ const DashboardScreen = ({ navigation }) => {
         />
       )}
       {showFilterPanel && (
-        <View style={[cStyles.panel, { zIndex: 10 }]}>
+        <View style={[cStyles.panel, { zIndex: 10, maxHeight: '80%' }]}>
           <View style={cStyles.panelHeader}>
             <Text style={cStyles.panelTitle}>Filter Devices</Text>
           </View>
-          {(() => {
-            const availableStates = dropdowns.states || [];
-            const availableOms = dropdowns.oms || [];
-            const availableAoms = dropdowns.aoms || [];
-            const availableClusters = dropdowns.clusters || [];
-            const availableFses = dropdowns.fses || [];
-            const availableTechnicians = dropdowns.technicians || [];
+          <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled={true}>
+            {(() => {
+              const availableStates = dropdowns.states || [];
+              const availableOms = dropdowns.oms || [];
+              const availableAoms = dropdowns.aoms || [];
+              const availableClusters = dropdowns.clusters || [];
+              const availableFses = dropdowns.fses || [];
+              const availableTechnicians = dropdowns.technicians || [];
 
-            return (
-              <>
-                {renderCascadeDropdown('IME', 'office-building-outline', 'ime', selIme, dropdowns.imes || [],
-                  (v) => { setSelIme(v); },
-                  () => { setSelIme(null); }
-                )}
-                {isSuperadmin && renderCascadeDropdown('Client', 'account-multiple-outline', 'client', selClient, dropdowns.clients || [],
-                  (v) => { setSelClient(v); setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
-                  () => { setSelClient(null); setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
-                )}
-                {renderCascadeDropdown('Circle', 'map-outline', 'state', selState, availableStates,
-                  (v) => { setSelState(v); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
-                  () => { setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
-                )}
-                {renderCascadeDropdown('O&M Head', 'account-tie', 'om', selOm, availableOms,
-                  (v) => { setSelOm(v); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
-                  () => { setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
-                )}
-                {renderCascadeDropdown('AOM', 'account-supervisor', 'aom', selAom, availableAoms,
-                  (v) => { setSelAom(v); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
-                  () => { setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
-                )}
-                {renderCascadeDropdown('Cluster', 'hexagon-multiple-outline', 'cluster', selCluster, availableClusters,
-                  (v) => { setSelCluster(v); setSelFse(null); setSelTechnician(null); setSelDevice(null); },
-                  () => { setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null); }
-                )}
-                {renderCascadeDropdown('FSE', 'account-wrench-outline', 'fse', selFse, availableFses,
-                  (v) => { setSelFse(v); setSelTechnician(null); setSelDevice(null); },
-                  () => { setSelFse(null); setSelTechnician(null); setSelDevice(null); }
-                )}
-                {renderCascadeDropdown('Technician', 'account-hard-hat', 'technician', selTechnician, availableTechnicians,
-                  (v) => { setSelTechnician(v); setSelDevice(null); },
-                  () => { setSelTechnician(null); setSelDevice(null); }
-                )}
-                {renderCascadeDropdown('Device', 'car', 'device', selDevice, filteredDeviceOptions,
-                  (v) => setSelDevice(v),
-                  () => setSelDevice(null)
-                )}
-              </>
-            );
-          })()}
+              return (
+                <>
+                  {renderCascadeDropdown('IME', 'office-building-outline', 'ime', selIme, dropdowns.imes || [],
+                    (v) => { setSelIme(v); },
+                    () => { setSelIme(null); }
+                  )}
+                  {isSuperadmin && renderCascadeDropdown('Client', 'account-multiple-outline', 'client', selClient, dropdowns.clients || [],
+                    (v) => {
+                      setSelClient(v);
+                      setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('client');
+                    },
+                    () => {
+                      setSelClient(null);
+                      setSelState(null); setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('client');
+                    }
+                  )}
+                  {renderCascadeDropdown('Circle', 'map-outline', 'state', selState, availableStates,
+                    (v) => {
+                      setSelState(v);
+                      setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('state');
+                    },
+                    () => {
+                      setSelState(null);
+                      setSelOm(null); setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('state');
+                    }
+                  )}
+                  {renderCascadeDropdown('O&M Head', 'account-tie', 'om', selOm, availableOms,
+                    (v) => {
+                      setSelOm(v);
+                      setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('om');
+                    },
+                    () => {
+                      setSelOm(null);
+                      setSelAom(null); setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('om');
+                    }
+                  )}
+                  {renderCascadeDropdown('AOM', 'account-supervisor', 'aom', selAom, availableAoms,
+                    (v) => {
+                      setSelAom(v);
+                      setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('aom');
+                    },
+                    () => {
+                      setSelAom(null);
+                      setSelCluster(null); setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('aom');
+                    }
+                  )}
+                  {renderCascadeDropdown('Cluster', 'hexagon-multiple-outline', 'cluster', selCluster, availableClusters,
+                    (v) => {
+                      setSelCluster(v);
+                      setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('cluster');
+                    },
+                    () => {
+                      setSelCluster(null);
+                      setSelFse(null); setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('cluster');
+                    }
+                  )}
+                  {renderCascadeDropdown('FSE', 'account-wrench-outline', 'fse', selFse, availableFses,
+                    (v) => {
+                      setSelFse(v);
+                      setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('fse');
+                    },
+                    () => {
+                      setSelFse(null);
+                      setSelTechnician(null); setSelDevice(null);
+                      clearDownstreamOptions('fse');
+                    }
+                  )}
+                  {renderCascadeDropdown('Technician', 'account-hard-hat', 'technician', selTechnician, availableTechnicians,
+                    (v) => { setSelTechnician(v); setSelDevice(null); },
+                    () => { setSelTechnician(null); setSelDevice(null); }
+                  )}
+                  {renderCascadeDropdown('Device', 'car', 'device', selDevice, filteredDeviceOptions,
+                    (v) => setSelDevice(v),
+                    () => setSelDevice(null)
+                  )}
+                </>
+              );
+            })()}
+          </ScrollView>
 
           {/* Filter action buttons */}
           <View style={cStyles.buttonRow}>

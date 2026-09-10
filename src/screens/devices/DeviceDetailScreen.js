@@ -573,7 +573,7 @@ const DeviceDetailScreen = ({ route, navigation }) => {
           <View style={styles.expandedDrawer}>
             {[
               { label: '🌐 Circle', value: item.circle || 'N/A' },
-              { label: '📍 Area / District', value: `${item.area || 'N/A'} / ${item.district || 'N/A'}` },
+              { label: '📍 Cluster', value: item.area || 'N/A' },
               { label: '🏫 Site Name / Type', value: `${item.site_name || 'N/A'} (${item.site_type || 'N/A'})` },
               // { label: '🔵 Current Indus ID', value: item.current_indus_id || 'N/A' },
               // { label: '📏 Nearest Distance', value: (item.site_distance != null ? item.site_distance : item.nearest_distance_m) != null ? `${parseFloat(item.site_distance ?? item.nearest_distance_m).toFixed(2)} km` : 'N/A' },
