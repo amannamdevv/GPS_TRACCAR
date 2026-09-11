@@ -54,11 +54,6 @@ const formatTime = (timeStr) => {
   const h = parseInt(parts[0], 10);
   const m = parseInt(parts[1], 10);
   const s = parts.length > 2 ? parseInt(parts[2], 10) : 0;
-  if (h >= 24) {
-    const d = Math.floor(h / 24);
-    const remH = h % 24;
-    return `${d}d ${String(remH).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  }
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 };
 
