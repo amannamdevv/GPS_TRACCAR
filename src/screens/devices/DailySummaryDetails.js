@@ -279,6 +279,11 @@ const DailySummaryDetails = ({ onBack, deviceName, deviceId, initialDate, onOpen
                 <LegendItem onPress={() => onGoToDgReport?.('IDLE', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} color="#f59e0b" label="Idle" value={`${idlePct}% (${formatTime(apiData?.total_dg_idle)})`} />
                 <LegendItem onPress={() => onGoToDgReport?.('STOP', moment(currentDate).format('YYYY-MM-DD'), moment(currentDate).format('YYYY-MM-DD'))} color="#ef4444" label="Stop" value={`${stopPct}% (${formatTime(apiData?.total_dg_stop)})`} />
               </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: '#f1f5f9' }}>
+                <Icon name="map-marker-distance" size={16} color="#1565C0" style={{ marginRight: 8 }} />
+                <Text style={{ fontSize: 12, color: '#64748b', fontWeight: '600' }}>Distance Covered</Text>
+                <Text style={{ marginLeft: 'auto', fontSize: 14, color: '#1565C0', fontWeight: '800' }}>{apiData?.total_dg_move_km || 0} km</Text>
+              </View>
             </View>
 
             <View style={styles.card}>
@@ -287,7 +292,6 @@ const DailySummaryDetails = ({ onBack, deviceName, deviceId, initialDate, onOpen
                 <AddInfoItem icon="car" label="DG Name" value={deviceName || apiData?.dg_name || 'Unknown'} />
                 <AddInfoItem icon="barcode" label="GPS IMEI" value={apiData?.gps_imei || 'N/A'} />
                 <AddInfoItem icon="calendar-check" label="Install Date" value={apiData?.gps_install_date ? moment(apiData.gps_install_date).format('DD/MM/YYYY') : 'N/A'} />
-                <AddInfoItem icon="speedometer" label="Distance" value={`${apiData?.total_dg_move_km || 0} km`} />
                 <AddInfoItem icon="lightning-bolt" label="Ext V Start" value={apiData?.start_adc1 != null ? `${parseFloat(apiData.start_adc1).toFixed(2)} V` : '0.00 V'} />
                 <AddInfoItem icon="lightning-bolt" label="Ext V End" value={apiData?.end_adc1 != null ? `${parseFloat(apiData.end_adc1).toFixed(2)} V` : '0.00 V'} />
               </View>
