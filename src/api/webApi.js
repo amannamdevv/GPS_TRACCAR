@@ -3,6 +3,7 @@
 import axios from 'axios';
 import moment from 'moment';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import DeviceInfo from 'react-native-device-info';
 
 const BASE_URL = 'https://gps.shrotitele.com/api';
 
@@ -582,12 +583,19 @@ export const reverseGeocode = async (lat, lon) => {
 };
 
 // ─── loginApi ────────────────────────────────────────────────────────────────
-export const loginApi = async (serverUrl, email, password) => {
+// isNewLogin = true  → actual Login button click → backend inserts session log
+// isNewLogin = false → silent re-auth (refresh/navigation) → no session log
+export const loginApi = async (serverUrl, email, password, isNewLogin = false) => {
   try {
-    const response = await webApi.post('/login/', {
+    const body = {
       login_id: email,
       password: password
-    }, {
+    };
+    if (isNewLogin) {
+      body.is_new_login = true;
+      body.device_id = await DeviceInfo.getUniqueId();
+    }
+    const response = await webApi.post('/login/', body, {
       headers: {
         'Content-Type': 'application/json'
       }
@@ -606,6 +614,18 @@ export const loginApi = async (serverUrl, email, password) => {
     }
   } catch (error) {
     throw new Error(error.response?.data?.message || error.message || 'Login failed. Check credentials or server.');
+  }
+};
+
+// ─── logoutApi ───────────────────────────────────────────────────────────────
+export const logoutApi = async (loginId) => {
+  try {
+    // using the webApi client so it respects the current BASE_URL (e.g. test port or live)
+    await webApi.post('/api_logout_test/', { login_id: loginId }, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    console.warn('[logoutApi]', error.message);
   }
 };
 
@@ -691,8 +711,11 @@ export const fetchFilterDropdowns = async (clientId = null, stateId = null, omId
 
 export const fetchSupportDetails = async () => {
   try {
-    const resp = await webApi.get('/jep_support_api/');
-    return resp.data;
+    const resp = await webApi.get('/dg_daily_gps_support_details/');
+    if (resp.data && resp.data.success) {
+      return resp.data.data;
+    }
+    return null;
   } catch (e) {
     console.warn('[fetchSupportDetails]', e.message);
     return null;

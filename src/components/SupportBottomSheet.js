@@ -10,10 +10,11 @@ import { useEffect, useState } from 'react';
 
 const SupportBottomSheet = ({ setStatus, mode }) => {
   const [supportDetail, setSupportDetail] = useState({
-    number1: '07553122002',
-    number2: '07553122005',
-    email1: 'TPMS.Support@shrotigroup.in',
-    whatsapp: '919755522181'
+    // STATIC DATA COMMENTED OUT - FETCHING FROM API NOW
+    // number1: '07553122002',
+    // number2: '07553122005',
+    // email1: 'TPMS.Support@shrotigroup.in',
+    // whatsapp: '919755522181'
   });
 
   useEffect(() => {

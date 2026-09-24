@@ -6,10 +6,9 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
-import { loginApi } from '../api/webApi';
+import { loginApi, logoutApi } from '../api/webApi';
 import AlertNotificationService from '../services/AlertNotificationService';
 
-const logoutApi = async () => {};
 const apiRestoreSession = async () => {
   return { id: 1, name: 'Gourav Admin' };
 };
@@ -39,8 +38,8 @@ export const AuthProvider = ({ children }) => {
         'cached_device_names', 'cached_deleted_alerts', 'cached_read_alerts'
       ]);
 
-      // loginApi stores: server, email, pass, cookie in AsyncStorage
-      const user = await loginApi(serverUrl, email, password);
+      // loginApi with isNewLogin=true → backend will insert a session log record
+      const user = await loginApi(serverUrl, email, password, true);
       
       // BACKGROUND BYPASS: Silently login as super admin to grab the powerful session cookie.
       // This allows the client user to fetch full telemetry data that the backend otherwise blocks.
@@ -75,7 +74,11 @@ export const AuthProvider = ({ children }) => {
   // ─── LOGOUT ─────────────────────────────────────────────────────────────────
   const logout = async () => {
     setIsLoading(true);
-    try { await logoutApi(); } catch (_) {}
+    try { 
+      if (userInfo?.email) {
+        await logoutApi(userInfo.email); 
+      }
+    } catch (_) {}
     setUserToken(null);
     setUserInfo(null);
     await AsyncStorage.multiRemove([
